@@ -58,6 +58,8 @@ typedef signed int fix15 ;
 // Phase accumulator and phase increment. Increment sets output frequency.
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+volatile float y = 0;
+volatile float test = 400.0;
 
 // DDS sine table (populated in main())
 #define sine_table_size 256
@@ -78,11 +80,12 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define ATTACK_TIME             250
 #define DECAY_TIME              250
 #define SUSTAIN_TIME            10000
-#define BEEP_DURATION           10500
+// #define BEEP_DURATION           10500
+#define BEEP_DURATION           6500
 #define BEEP_REPEAT_INTERVAL    50000
 
 // State machine variables
-volatile unsigned int STATE_0 = 1 ;
+volatile unsigned int STATE_0 = 0 ;
 volatile unsigned int count_0 = 0 ;
 
 // SPI data
@@ -119,9 +122,16 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    if (STATE_0 == 0) {
-        // DDS phase and sine table lookup
+    if (STATE_0 != 0) {
         phase_accum_main_0 += phase_incr_main_0  ;
+        if (STATE_0 == 2) {
+            y = (0.000118343) * count_0 * count_0 + 2000;
+        } else if (STATE_0 == 1) {
+            y = (-0.00002462) * count_0 * count_0 + 0.16 * count_0 + 1740;
+        } else if (STATE_0 == 3) {
+            y = 0;
+        }
+        phase_incr_main_0 = (y*two32)/Fs;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
 
@@ -145,8 +155,9 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = 1 ;
+            STATE_0 = 0 ;
             count_0 = 0 ;
+            y = 0.0;
         }
     }
 
@@ -193,10 +204,11 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         // Otherwise, indicate invalid/non-pressed buttons
         else (i=-1) ;
 
-        // Write key to VGA
+        // logic to switch to record / play mode
+
         if (i != -1 && i == prev_key && prev_key != prev_prev_key) {
             current_amplitude_0 = 0 ;
-            STATE_0 = 0 ;
+            STATE_0 = i ;
             count_0 = 0 ;
         }
         
@@ -204,7 +216,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         prev_key = i ;
 
         // Print key to terminal
-        printf("\n%d", i) ;
+        printf("\n%d\t%d", STATE_0, i) ;
 
         PT_YIELD_usec(30000) ;
     }
