@@ -86,6 +86,7 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 
 // State machine variables
 volatile unsigned int STATE_0 = 0 ;
+volatile unsigned int RECORD_STATE = 0 ;
 volatile unsigned int count_0 = 0 ;
 
 // SPI data
@@ -109,6 +110,10 @@ uint16_t DAC_data_0 ; // output value
 
 //GPIO for timing the ISR
 #define ISR_GPIO 2
+
+semaphore_t playback_go ;
+int record[100] ;
+int record_index = 0;
 
 // This timer ISR is called on core 0
 static void alarm_irq(void) {
@@ -167,6 +172,35 @@ static void alarm_irq(void) {
 }
 
 // This thread runs on core 0
+static PT_THREAD (protothread_playback(struct pt *pt))
+{
+    // Indicate thread beginning
+    PT_BEGIN(pt) ;
+    while(1) {
+        // Wait for signal
+        PT_SEM_SDK_WAIT(pt, &playback_go) ;
+        printf("here\n");
+        // add logic
+
+        int playback_index = 0;
+        int current = record[playback_index];
+
+        while (current != 0) {
+            current_amplitude_0 = 0 ;
+            STATE_0 = current ;
+            count_0 = 0 ;
+            sleep_ms(130);
+
+            playback_index++;
+            current = record[playback_index];
+        }
+        
+    }
+    // Indicate thread end
+    PT_END(pt) ;
+}
+
+// This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
 {
     // Indicate thread beginning
@@ -207,16 +241,39 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         // logic to switch to record / play mode
 
         if (i != -1 && i == prev_key && prev_key != prev_prev_key) {
-            current_amplitude_0 = 0 ;
-            STATE_0 = i ;
-            count_0 = 0 ;
+
+            if (i <= 3) {
+                current_amplitude_0 = 0 ;
+                STATE_0 = i ;
+                count_0 = 0 ;
+                
+                if (RECORD_STATE) {
+                    record[record_index] = i;
+                    record_index++;
+                }
+            } else if (i == 4) {
+                RECORD_STATE = 1;
+                for (int j = 0; j < 100; j++) {
+                    record[j] = 0;
+                }
+                record_index = 0;
+            } else if (i == 5) {
+                RECORD_STATE = 0;
+                PT_YIELD(pt);
+                PT_SEM_SDK_SIGNAL(pt, &playback_go) ;
+                printf("sent semaphore\n");
+            }
         }
         
         prev_prev_key = prev_key;
         prev_key = i ;
 
         // Print key to terminal
-        printf("\n%d\t%d", STATE_0, i) ;
+        // printf("\n%d\t%d", STATE_0, i) ;
+        // printf("\nRecord: ");
+        // for (int k = 0; k < 10; k++) {
+        //     printf("%d\t", record[k]);
+        // }
 
         PT_YIELD_usec(30000) ;
     }
@@ -307,6 +364,9 @@ int main() {
          sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
     }
 
+    sem_init(&playback_go, 0, 1) ;
+
+
     // Enable the interrupt for the alarm (we're using Alarm 0)
     hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM) ;
     irq_set_exclusive_handler(ALARM_IRQ, alarm_irq) ;
@@ -315,6 +375,7 @@ int main() {
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
     pt_add_thread(protothread_core_0) ;
+    pt_add_thread(protothread_playback) ;
     pt_schedule_start ;
 
 }
