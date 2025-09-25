@@ -1,3 +1,7 @@
+// ECE 4760 Lab 1 Code
+// Erica Jiang (ej289)
+// Max Trager (mt687)
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -31,6 +35,8 @@ unsigned int button = 0x70 ;
 
 
 char keytext[40];
+
+// State machine variables
 int prev_key = -1;
 int prev_prev_key = -1;
 
@@ -55,11 +61,13 @@ typedef signed int fix15 ;
 #define DELAY 20 // 1/Fs (in microseconds)
 
 // the DDS units - core 0
+
 // Phase accumulator and phase increment. Increment sets output frequency.
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
-volatile float y = 0;
-volatile float test = 400.0;
+
+// Frequency output to synthesize for input to DDS
+volatile float frequency = 0;
 
 // DDS sine table (populated in main())
 #define sine_table_size 256
@@ -80,9 +88,9 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define ATTACK_TIME             250
 #define DECAY_TIME              250
 #define SUSTAIN_TIME            10000
-// #define BEEP_DURATION           10500
+
+// Sound Primitive timing parameter (6500 interrupts)
 #define BEEP_DURATION           6500
-#define BEEP_REPEAT_INTERVAL    50000
 
 // State machine variables
 volatile unsigned int STATE_0 = 0 ;
@@ -111,6 +119,7 @@ uint16_t DAC_data_0 ; // output value
 //GPIO for timing the ISR
 #define ISR_GPIO 2
 
+// Playback thread variables and semaphore definition
 semaphore_t playback_go ;
 int record[100] ;
 int record_index = 0;
@@ -127,16 +136,27 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
+    // If we want to generate a noise (or silence) ...
     if (STATE_0 != 0) {
-        phase_accum_main_0 += phase_incr_main_0  ;
-        if (STATE_0 == 2) {
-            y = (0.000118343) * count_0 * count_0 + 2000;
-        } else if (STATE_0 == 1) {
-            y = (-0.00002462) * count_0 * count_0 + 0.16 * count_0 + 1740;
-        } else if (STATE_0 == 3) {
-            y = 0;
+        
+        // Calculate swoop frequency
+        if (STATE_0 == 1) {
+            frequency = (-0.00002462) * count_0 * count_0 + 0.16 * count_0 + 1740;
+        } 
+        
+        // Calculate chirp frequency
+        else if (STATE_0 == 2) {
+            frequency = (0.000118343) * count_0 * count_0 + 2000;
+        } 
+        
+        // Silence
+        else if (STATE_0 == 3) {
+            frequency = 0;
         }
-        phase_incr_main_0 = (y*two32)/Fs;
+        
+        // Increment DDS and send to DAC
+        phase_incr_main_0 = (frequency*two32)/Fs;
+        phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
 
@@ -171,26 +191,31 @@ static void alarm_irq(void) {
 
 }
 
-// This thread runs on core 0
+// This thread runs on core 0 - playback mode
 static PT_THREAD (protothread_playback(struct pt *pt))
 {
     // Indicate thread beginning
     PT_BEGIN(pt) ;
     while(1) {
-        // Wait for signal
+        // Wait for signal from record/keypad thread
         PT_SEM_SDK_WAIT(pt, &playback_go) ;
-        printf("here\n");
-        // add logic
-
+        
+        // Set index to 0, set current to first sound to play
         int playback_index = 0;
         int current = record[playback_index];
 
+        // While there are still sound primitives to play..
         while (current != 0) {
+            
+            // Play the current sound primitive in the array
             current_amplitude_0 = 0 ;
             STATE_0 = current ;
             count_0 = 0 ;
+            
+            // Let the sound play out (each primitive lasts 130ms)
             sleep_ms(130);
 
+            // Go to the next element in the record array
             playback_index++;
             current = record[playback_index];
         }
@@ -200,13 +225,13 @@ static PT_THREAD (protothread_playback(struct pt *pt))
     PT_END(pt) ;
 }
 
-// This thread runs on core 0
+// This thread runs on core 0 - normal play mode and record mode.
 static PT_THREAD (protothread_core_0(struct pt *pt))
 {
     // Indicate thread beginning
     PT_BEGIN(pt) ;
 
-    // Some variables
+    // Initialize variables
     static int i = -1;
     static uint32_t keypad ;
 
@@ -238,43 +263,60 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         // Otherwise, indicate invalid/non-pressed buttons
         else (i=-1) ;
 
-        // logic to switch to record / play mode
-
+        
+        // Debouncer logic 
         if (i != -1 && i == prev_key && prev_key != prev_prev_key) {
 
+            // If one of buttons 1, 2, 3 pressed ... 
             if (i <= 3) {
+                
+                // Set state to corresponding press, to play the desired sound
                 current_amplitude_0 = 0 ;
                 STATE_0 = i ;
                 count_0 = 0 ;
                 
+                // If we are in record mode ... 
                 if (RECORD_STATE) {
+                    // Keep track of each press and increment for next possible element
                     record[record_index] = i;
                     record_index++;
                 }
-            } else if (i == 4) {
+            } 
+            
+            // If button 4 is pressed, we want to record
+            else if (i == 4) {
+                
+                // Indicate we are in record state
                 RECORD_STATE = 1;
+                
+                // Clear the previous array
                 for (int j = 0; j < 100; j++) {
                     record[j] = 0;
                 }
+
+                // Index at the start of the array
                 record_index = 0;
-            } else if (i == 5) {
+            } 
+            
+            // If button 5 is pressed, we want to playback the recording (if there is one)
+            else if (i == 5) {
+                // We aren't recording anymore
                 RECORD_STATE = 0;
+                
+                // Yield the thread 
                 PT_YIELD(pt);
+                
+                // Sent a semaphore signal so that the playback thread is scheduled
                 PT_SEM_SDK_SIGNAL(pt, &playback_go) ;
-                printf("sent semaphore\n");
+                
             }
         }
         
+        // Set state machine variables for next keypad scan
         prev_prev_key = prev_key;
         prev_key = i ;
 
-        // Print key to terminal
-        // printf("\n%d\t%d", STATE_0, i) ;
-        // printf("\nRecord: ");
-        // for (int k = 0; k < 10; k++) {
-        //     printf("%d\t", record[k]);
-        // }
-
+        // Run every 30msec
         PT_YIELD_usec(30000) ;
     }
     // Indicate thread end
@@ -290,35 +332,13 @@ int main() {
     // Initialize stdio
     stdio_init_all();
 
-    // Initialize the VGA screen
-    initVGA() ;
-
-    // Draw some filled rectangles
-    fillRect(64, 0, 176, 50, BLUE); // blue box
-    fillRect(250, 0, 176, 50, RED); // red box
-    fillRect(435, 0, 176, 50, GREEN); // green box
-
-    // Write some text
-    setTextColor(WHITE) ;
-    setCursor(65, 0) ;
-    setTextSize(1) ;
-    writeString("Raspberry Pi Pico") ;
-    setCursor(65, 10) ;
-    writeString("Keypad demo") ;
-    setCursor(65, 20) ;
-    writeString("Hunter Adams") ;
-    setCursor(65, 30) ;
-    writeString("vha3@cornell.edu") ;
-    setCursor(250, 0) ;
-    setTextSize(2) ;
-    writeString("Key Pressed:") ;
-
     // Map LED to GPIO port, make it low
     gpio_init(LED) ;
     gpio_set_dir(LED, GPIO_OUT) ;
     gpio_put(LED, 0) ;
 
     ////////////////// KEYPAD INITS ///////////////////////
+    
     // Initialize the keypad GPIO's
     gpio_init_mask((0x7F << BASE_KEYPAD_PIN)) ;
     // Set row-pins to output
@@ -364,16 +384,18 @@ int main() {
          sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
     }
 
+    // Initialize a semaphore for thread signaling
     sem_init(&playback_go, 0, 1) ;
-
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
     hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM) ;
     irq_set_exclusive_handler(ALARM_IRQ, alarm_irq) ;
     irq_set_enabled(ALARM_IRQ, true) ;
+    
     // Write the lower 32 bits of the target time to the alarm register, arming it.
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
+    // Add protothreads and start them
     pt_add_thread(protothread_core_0) ;
     pt_add_thread(protothread_playback) ;
     pt_schedule_start ;
