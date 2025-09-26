@@ -58,10 +58,15 @@ typedef signed int fix15 ;
 #define hitLeft(a) (a<int2fix15(100))
 #define hitRight(a) (a>int2fix15(540))
 
+#define VERTICAL_SPACING 19
+#define HORIZONTAL_SPACING 38
+#define NUM_ROWS 16
+#define NUM_PEGS ((NUM_ROWS * (NUM_ROWS + 1)) / 2)
+
 typedef struct
 {
-    fix15 x;
-    fix15 y;
+    int x;
+    int y;
 } peg;
 
 typedef struct
@@ -72,8 +77,8 @@ typedef struct
     fix15 vy;
 } ball;
 
-peg peg_array[15] ;
-ball ball_array[15] ;
+peg peg_array[136] ;
+ball ball_array[1] ;
 
 // uS per frame
 #define FRAME_RATE 33000
@@ -252,6 +257,27 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
+    // begin generated code
+    int start_x = 320;
+    int start_y = 19;
+
+    int peg_index = 0;
+
+    for (int row = 0; row < NUM_ROWS; row++) {
+        int y = start_y + row * VERTICAL_SPACING;
+
+        for (int col = 0; col <= row; col++) {
+            // center pegs in each row under start_x
+            int x = start_x - (row * HORIZONTAL_SPACING) / 2 + col * HORIZONTAL_SPACING;
+
+            peg_array[peg_index].x = x;
+            peg_array[peg_index].y = y;
+            peg_index++;
+        }
+    }
+    // end generated code
+    
+
     // Spawn a ball
     spawnball(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, 0);
 
@@ -268,7 +294,9 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // draw the ball at its new position
       drawCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, WHITE);
       
-      drawCircle(320, 50, 6, WHITE);
+      for (int i = 0; i < 136; i++) {
+        drawCircle(peg_array[i].x, peg_array[i].y, 6, WHITE);
+      }
       // draw the boundaries
       // drawArena() ;
       // delay in accordance with frame rate
