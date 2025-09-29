@@ -67,6 +67,8 @@ typedef struct
 {
     int x;
     int y;
+    int fix15_x;
+    int fix15_y;
 } peg;
 
 typedef struct
@@ -91,8 +93,15 @@ fix15 ball0_x ;
 fix15 ball0_y ;
 fix15 ball0_vx ;
 fix15 ball0_vy ;
+fix15 fix15_gravity = float2fix15(0.75) ;
+fix15 fix15_0 = int2fix15(0) ;
+fix15 fix15_2 = int2fix15(2) ;
+fix15 fix15_neg2 = int2fix15(-2) ;
+fix15 fix15_0point25 = float2fix15(0.25) ;
+fix15 fix15_10 = int2fix15(10) ;
+
 fix15 peg0_x = int2fix15(320);
-fix15 peg0_y = int2fix15(50);
+fix15 peg0_y = int2fix15(19);
 
 // ball on core 1
 fix15 ball1_x ;
@@ -129,7 +138,7 @@ int ctrl_chan ;
 int data_chan ;
 
 // Create a ball
-void spawnball(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
+void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
 {
   // Start in center of screen
   *x = int2fix15(320) ;
@@ -144,16 +153,17 @@ void spawnball(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
 }
 
 // Detect wallstrikes, update velocity and position
-void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy)
+void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
 {
   // Reverse direction if we've hit a wall
-  if (hitTop(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y + int2fix15(5)) ;
-  }
+  // if (hitTop(*y)) {
+  //   *vy = (-*vy) ;
+  //   *y  = (*y + int2fix15(5)) ;
+  // }
   if (hitBottom(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y - int2fix15(5)) ;
+    // *vy = (-*vy) ;
+    // *y  = (*y - int2fix15(5)) ;
+    spawnBall(&ball->x, &ball->y, &ball->vx, &ball->vy, 0);
   } 
   if (hitRight(*x)) {
     *vx = (-*vx) ;
@@ -172,7 +182,7 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy)
 void death(fix15* x, fix15* y, fix15* vx, fix15* vy)
 {
   if (hitBottom(*y)) {
-    spawnball(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, 0);
+    spawnBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, 0);
   }
 }
 
@@ -183,37 +193,43 @@ void drawBoard() {
 bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y) {
   fix15 dx = *ball_x - *peg_x ;
   fix15 dy = *ball_y - *peg_y ;
+  fix15 abs_dx = absfix15(dx) ;
+  fix15 abs_dy = absfix15(dy) ;
   fix15 dist ;
 
-  if (absfix15(dx) > absfix15(dy)) {
-    dist = absfix15(dx) + multfix15(float2fix15(0.25), absfix15(dy));
+  if (abs_dx > abs_dy) {
+    dist = abs_dx + multfix15(fix15_0point25, abs_dy);
   } else {
-    dist = absfix15(dy) + multfix15(float2fix15(0.25), absfix15(dx));
+    dist = abs_dy + multfix15(fix15_0point25, abs_dx);
   }
 
-  if (absfix15(dist) < int2fix15(10)) { 
+  if (absfix15(dist) < fix15_10) {
     fix15 normal_x = divfix(dx, dist);
     fix15 normal_y = divfix(dy, dist);
 
-    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x, *ball_vx) + multfix15(normal_y, *ball_vy)));
+    fix15 intermediate_term = multfix15(fix15_neg2, (multfix15(normal_x, *ball_vx) + multfix15(normal_y, *ball_vy)));
    
-    if (intermediate_term > int2fix15(0)) {
-      *ball_x = *peg_x + multfix15(normal_x, (dist+int2fix15(2)));
-      *ball_y = *peg_y + multfix15(normal_y, (dist+int2fix15(2)));
+    if (intermediate_term > fix15_0) {
+      *ball_x = *peg_x + multfix15(normal_x, (dist+fix15_2));
+      *ball_y = *peg_y + multfix15(normal_y, (dist+fix15_2));
 
       *ball_vx = *ball_vx + multfix15(normal_x, intermediate_term);
       *ball_vy = *ball_vy + multfix15(normal_y, intermediate_term);
       
       // start the control channel
       dma_start_channel_mask(1u << ctrl_chan) ;
+      *ball_vx = 0.5 * *ball_vx;
+      *ball_vy = 0.5 * *ball_vy;
     }
   }
-  
-  *ball_vy = *ball_vy + float2fix15(0.32) ; // gravity
+
+  return absfix15(dist) < fix15_10;
+}
+
+void moveBall(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy) {
+  *ball_vy = *ball_vy + fix15_gravity ;
   *ball_x = *ball_x + *ball_vx ;
   *ball_y = *ball_y + *ball_vy ;
-
-  return absfix15(dist) < int2fix15(10);
 }
 
 // ==================================================
@@ -272,33 +288,39 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
             peg_array[peg_index].x = x;
             peg_array[peg_index].y = y;
+            peg_array[peg_index].fix15_x = int2fix15(x);
+            peg_array[peg_index].fix15_y = int2fix15(y);
             peg_index++;
         }
     }
     // end generated code
-    
 
-    // Spawn a ball
-    spawnball(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, 0);
+    for (int i = 0; i < 10; i++) {
+      ball_array[i].x = int2fix15(320) ;
+      ball_array[i].y = int2fix15(0) ;
+      ball_array[i].vx = int2fix15(0) ;
+      ball_array[i].vy = int2fix15(0) ;
+      spawnBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, 0);
+    }
 
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;      
-      // erase ball
-      drawCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLACK);
-      // update ball's position and velocity
-      // wallsAndEdges(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy) ;
-      death(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy) ;
-      collide(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, &peg0_x, &peg0_y); 
-      
-      // draw the ball at its new position
-      drawCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, WHITE);
-      
+
+      for (int i = 0; i < 10; i++) {
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
+        for (int j = 0; j < 136; j++) {
+          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y);
+        }
+        moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
+      }
+
       for (int i = 0; i < 136; i++) {
         drawCircle(peg_array[i].x, peg_array[i].y, 6, WHITE);
       }
-      // draw the boundaries
-      // drawArena() ;
+      
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -320,7 +342,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int spare_time ;
 
     // Spawn a ball
-    spawnball(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, 1);
+    spawnBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, 1);
 
     while(1) {
       // Measure time at start of thread
