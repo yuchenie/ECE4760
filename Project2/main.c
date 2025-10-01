@@ -53,7 +53,7 @@ typedef signed int fix15 ;
 #define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
 
 // Wall detection
-#define hitBottom(b) (b>int2fix15(480))
+#define hitBottom(b) (b>int2fix15(323))
 #define hitTop(b) (b<int2fix15(100))
 #define hitLeft(a) (a<int2fix15(100))
 #define hitRight(a) (a>int2fix15(540))
@@ -77,10 +77,16 @@ typedef struct
     fix15 y;
     fix15 vx;
     fix15 vy;
+    fix15 last_peg_y;
 } ball;
 
+int histogram_total = 0;
+int histogram[17] = {0};
+
 peg peg_array[136] ;
-ball ball_array[1] ;
+
+#define NUM_BALLS 1
+ball ball_array[NUM_BALLS] ;
 
 // uS per frame
 #define FRAME_RATE 33000
@@ -163,6 +169,17 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
   if (hitBottom(*y)) {
     // *vy = (-*vy) ;
     // *y  = (*y - int2fix15(5)) ;
+    int index = fix2int15(ball->x) / 38;
+    histogram[index]++;
+    histogram_total++;
+    // drawRect();
+    
+    fillRect(0, 323, 646, 100, BLACK);    
+    printf("\n%d\t", histogram_total);
+    for (int i = 0; i < 17; i++) {
+      fillRect(38*i, 323, 38, (int)(((float)histogram[i]/(float)histogram_total)*100), WHITE);
+      printf("%d ", histogram[i]);
+    }
     spawnBall(&ball->x, &ball->y, &ball->vx, &ball->vy, 0);
   } 
   if (hitRight(*x)) {
@@ -190,7 +207,7 @@ void drawBoard() {
 
 }
 
-bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y) {
+bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y, fix15* last_peg_y) {
   fix15 dx = *ball_x - *peg_x ;
   fix15 dy = *ball_y - *peg_y ;
   fix15 abs_dx = absfix15(dx) ;
@@ -215,11 +232,15 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
 
       *ball_vx = *ball_vx + multfix15(normal_x, intermediate_term);
       *ball_vy = *ball_vy + multfix15(normal_y, intermediate_term);
-      
+
       // start the control channel
-      dma_start_channel_mask(1u << ctrl_chan) ;
-      *ball_vx = 0.5 * *ball_vx;
-      *ball_vy = 0.5 * *ball_vy;
+      if (*last_peg_y != *peg_y) {
+        dma_start_channel_mask(1u << ctrl_chan) ;
+        *ball_vx = 0.5 * *ball_vx;
+        *ball_vy = 0.5 * *ball_vy;
+      }
+
+      *last_peg_y = *peg_y;
     }
   }
 
@@ -295,7 +316,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     }
     // end generated code
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < NUM_BALLS; i++) {
       ball_array[i].x = int2fix15(320) ;
       ball_array[i].y = int2fix15(0) ;
       ball_array[i].vx = int2fix15(0) ;
@@ -307,11 +328,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Measure time at start of thread
       begin_time = time_us_32() ;      
 
-      for (int i = 0; i < 10; i++) {
+      for (int i = 0; i < NUM_BALLS; i++) {
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
         for (int j = 0; j < 136; j++) {
-          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y);
+          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y, &ball_array[i].last_peg_y);
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
