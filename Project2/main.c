@@ -38,6 +38,7 @@
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/spi.h"
+#include "hardware/adc.h"
 // Include protothreads
 #include "pt_cornell_rp2040_v1_4.h"
 
@@ -80,10 +81,11 @@ typedef struct
     fix15 last_peg_y;
 } ball;
 
-#define NUM_BALLS 100
+#define MAX_BALLS 1000
+volatile int NUM_BALLS = 0;
 
 peg peg_array[136] ;
-ball ball_array[NUM_BALLS] ;
+ball ball_array[MAX_BALLS] ;
 
 // uS per frame
 #define FRAME_RATE 33000
@@ -141,6 +143,8 @@ const uint32_t transfer_count = sine_table_size ;
 int ctrl_chan ;
 int data_chan ;
 
+#define ADC_PIN 26
+
 // Create a ball
 void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
 {
@@ -163,6 +167,7 @@ void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
 
 // Keeps track of how many balls fall in each
 int histogram[SLOT_NUM] ={0};
+int histogram_total = 0;
 
 // X-values of pegs in the last row
 int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434, 472, 510, 548, 586, 624};
@@ -307,8 +312,8 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
   if (hitBottom(*y)) {
     updateHistogramVals(&ball->x);
     displayHistogramVals();
+    histogram_total++;
     spawnBall(&ball->x, &ball->y, &ball->vx, &ball->vy, 0);
-    
   } 
   if (hitRight(*x)) {
     *vx = (-*vx) ;
@@ -436,7 +441,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     }
     // end generated code
 
-    for (int i = 0; i < NUM_BALLS; i++) {
+    for (int i = 0; i < MAX_BALLS; i++) {
       ball_array[i].x = int2fix15(320) ;
       ball_array[i].y = int2fix15(0) ;
       ball_array[i].vx = int2fix15(0) ;
@@ -446,7 +451,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     while(1) {
       // Measure time at start of thread
-      begin_time = time_us_32() ;      
+      begin_time = time_us_32() ;    
+
+      for (int i = NUM_BALLS; i < MAX_BALLS; i++) {
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+      }
 
       for (int i = 0; i < NUM_BALLS; i++) {
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
@@ -478,8 +487,23 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
     PT_BEGIN(pt) ;
 
     while(1) {
+      NUM_BALLS = adc_read() >> 5;        
+   
+      setTextColor2(WHITE, BLACK) ;
+      setTextSize(1) ;
+      char buffer[50];
+      
+      setCursor(10, 0) ;
+      sprintf(buffer, "ACTIVE BALL COUNT: %d", NUM_BALLS);
+      writeString(buffer) ;
+      
+      setCursor(10, 10) ;
+      sprintf(buffer, "TOTAL BALLS DROPPED: %d", histogram_total);
+      writeString(buffer) ;
 
-        
+      setCursor(10, 20) ;
+      sprintf(buffer, "TIME: %d us", time_us_32());
+      writeString(buffer) ;
 
         PT_YIELD_usec(30000) ;
     }
@@ -601,10 +625,16 @@ int main(){
       false                       // Don't start immediately.
   );
 
+  gpio_init(ADC_PIN);
+  gpio_set_dir(ADC_PIN, GPIO_IN);
+  adc_init();
+  adc_gpio_init(ADC_PIN);
+  adc_select_input(0);
 
   // add threads
   pt_add_thread(protothread_serial);
   pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_core_0);
 
   // start scheduler
   pt_schedule_start ;
