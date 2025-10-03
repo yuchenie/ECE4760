@@ -81,7 +81,7 @@ typedef struct
     fix15 last_peg_y;
 } ball;
 
-#define MAX_BALLS 1000
+#define MAX_BALLS 1500
 volatile int NUM_BALLS = 0;
 
 peg peg_array[136] ;
@@ -421,8 +421,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     // begin generated code
     int start_x = 320;
-    int start_y = 19;
-
+    int start_y = 24;
     int peg_index = 0;
 
     for (int row = 0; row < NUM_ROWS; row++) {
@@ -453,11 +452,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Measure time at start of thread
       begin_time = time_us_32() ;    
 
-      for (int i = NUM_BALLS; i < MAX_BALLS; i++) {
+      for (int i = NUM_BALLS; i < MAX_BALLS; i+=2) {
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
       }
 
-      for (int i = 0; i < NUM_BALLS; i++) {
+      for (int i = 0; i < NUM_BALLS; i+=2) {
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
         for (int j = 0; j < 136; j++) {
@@ -487,14 +486,14 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
     PT_BEGIN(pt) ;
 
     while(1) {
-      NUM_BALLS = adc_read() >> 5;        
+      NUM_BALLS = adc_read() >> 4;        
    
       setTextColor2(WHITE, BLACK) ;
       setTextSize(1) ;
       char buffer[50];
       
       setCursor(10, 0) ;
-      sprintf(buffer, "ACTIVE BALL COUNT: %d", NUM_BALLS);
+      sprintf(buffer, "ACTIVE BALL COUNT: %04d", NUM_BALLS);
       writeString(buffer) ;
       
       setCursor(10, 10) ;
@@ -522,18 +521,24 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
-    // Spawn a ball
-    spawnBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, 1);
-
     while(1) {
       // Measure time at start of thread
-      begin_time = time_us_32() ;      
-      // erase ball
-      drawRect(fix2int15(ball1_x), fix2int15(ball1_y), 2, 2, BLACK);
-      // update ball's position and velocity
-      // wallsAndEdges(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy) ;
-      // draw the ball at its new position
-      drawRect(fix2int15(ball1_x), fix2int15(ball1_y), 2, 2, color); 
+      begin_time = time_us_32() ;    
+
+      for (int i = NUM_BALLS+1; i < MAX_BALLS; i+=2) {
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+      }
+
+      for (int i = 1; i < NUM_BALLS; i+=2) {
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
+        for (int j = 0; j < 136; j++) {
+          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y);
+        }
+        moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
+        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, GREEN);
+      }
+      
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -634,6 +639,7 @@ int main(){
   // add threads
   pt_add_thread(protothread_serial);
   pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_anim1);
   pt_add_thread(protothread_core_0);
 
   // start scheduler
