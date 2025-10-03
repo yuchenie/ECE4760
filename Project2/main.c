@@ -53,10 +53,10 @@ typedef signed int fix15 ;
 #define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
 
 // Wall detection
-#define hitBottom(b) (b>int2fix15(480))
+#define hitBottom(b) (b>int2fix15(323))
 #define hitTop(b) (b<int2fix15(100))
-#define hitLeft(a) (a<int2fix15(100))
-#define hitRight(a) (a>int2fix15(540))
+#define hitLeft(a) (a<int2fix15(0))
+#define hitRight(a) (a>int2fix15(640))
 
 #define VERTICAL_SPACING 19
 #define HORIZONTAL_SPACING 38
@@ -77,10 +77,13 @@ typedef struct
     fix15 y;
     fix15 vx;
     fix15 vy;
+    fix15 last_peg_y;
 } ball;
 
+#define NUM_BALLS 100
+
 peg peg_array[136] ;
-ball ball_array[1] ;
+ball ball_array[NUM_BALLS] ;
 
 // uS per frame
 #define FRAME_RATE 33000
@@ -93,11 +96,12 @@ fix15 ball0_x ;
 fix15 ball0_y ;
 fix15 ball0_vx ;
 fix15 ball0_vy ;
-fix15 fix15_gravity = float2fix15(0.75) ;
+fix15 fix15_gravity = float2fix15(0.6) ;
 fix15 fix15_0 = int2fix15(0) ;
 fix15 fix15_2 = int2fix15(2) ;
 fix15 fix15_neg2 = int2fix15(-2) ;
 fix15 fix15_0point25 = float2fix15(0.25) ;
+fix15 fix15_0point5 = float2fix15(0.5);
 fix15 fix15_10 = int2fix15(10) ;
 
 fix15 peg0_x = int2fix15(320);
@@ -152,18 +156,159 @@ void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
   *vy = int2fix15(0) ;
 }
 
+
+// Number of slots balls could fall through on 16-row galton
+#define SLOT_NUM 17
+#define LAST_ROW_PEG_NUM 17
+
+// Keeps track of how many balls fall in each
+int histogram[SLOT_NUM] ={0};
+
+// X-values of pegs in the last row
+int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434, 472, 510, 548, 586, 624};
+
+
+fix15 fix15_38 = int2fix15(38);
+
+/*
+
+Histogram based on x-value when ball hits bottom:
+
+The last row of the galton board is as follows
+
+X-val:            16   54   92  130  168  206  244  282  320  358  396  434  472  510  548  586  624   
+
+Row:              o    o    o    o    o    o    o    o    o    o    o    o    o    o    o    o    o
+
+Index:          0   1    2    3    4    5    6    7    8    9    10   11   12   13   14   15   16   17  
+
+The first peg in the last row is at x value (320 - 38(8)) = 16
+
+So, if a ball hits bottom with x between 0 and 15 (shouldn't phase thru peg), it would go into index 0
+    if a ball hits bottom with x between 17 and 53 (shouldn't phase thru peg), it would go into index 0
+
+If we shift up by 22, then we can take the mod of the adjusted x value to get the proper index to increment. 
+The "zero index" would range from 0 to 37, the "one index" would range from 39 to 75
+
+
+We can perform a mod by performing fixed width division and converting to int
+
+*/ 
+
+// Updates histogram array, runs when a ball hits the bottom
+void updateHistogramVals(fix15* x) {
+  // Adjust x so taking mod alligns with index
+  
+  fix15 adjusted_x = *x + 22;
+  
+
+  // Take mod of adjusted x and 38 to get proper index to update
+  int index_to_update = fix2int15(divfix(adjusted_x, fix15_38));
+
+  // Increment corresponding index
+  histogram[index_to_update]++;
+
+}
+
+// Reset histogram back to intial states
+void resetHistogramVals() {
+  // Set all entries back to zero
+  for (int i=0; i<SLOT_NUM; i++) {
+    histogram[i] = 0;
+  }
+}
+
+// maximum height of a box on the histogram (i.e how much space in pixels do we have to work with)
+#define MAX_HEIGHT 140
+
+fix15 fix_MAX_HEIGHT = int2fix15(MAX_HEIGHT);
+
+int max_value = 0;
+int prev_max_value = 0;
+
+// Draw histogram boxes 
+void displayHistogramVals() {
+  // Black out the previous histogram
+  //clearLowFrame(323, BLACK);
+  
+  // Figure out what the maximum balls contained in one "slot" is
+  for (int i=0; i<SLOT_NUM; i++) {
+    if (histogram[i] > max_value) {
+      max_value = histogram[i];
+    }
+  };
+
+  // If we need to rescale the boxes
+  if (max_value != prev_max_value) {
+    clearLowFrame(323, BLACK);
+    prev_max_value = max_value;
+  }
+
+  // Only draw rectangles if balls have fallen through
+  if (max_value != 0) {
+
+    // Convert max value to fix15 for scale factor calc
+    fix15 fix_max_value = int2fix15(max_value);
+    
+    // Gives a scale factor (Pixels per Value [num of balls]) for us to scale the histogram boxes dynamically
+    fix15 height_scaler = divfix(fix_MAX_HEIGHT, fix_max_value);
+
+    // Rectangle parameters for each box
+    int rect_x; // Top left vertex x position
+    int rect_y; // Top left vertex y position
+    int rect_width;
+    int rect_height;
+
+    // For every slot
+    for (int i=0; i<SLOT_NUM; i++) {
+      
+      // Only draw a box if non-zero value in slot
+      if (histogram[i] > 0) {
+        
+        // Height (in pixels) for each slot = height_scale_factor x num of balls in slot
+        fix15 fix_rect_height = multfix15(height_scaler, int2fix15(histogram[i]));
+
+        // Height as an int, for input into draw function
+        rect_height = fix2int15(fix_rect_height);
+
+        // Slots on the left most edge (Slot 0)
+        if (i==0) {
+          rect_width   = 15;
+          rect_x  = 0; 
+        }
+
+        // Slot on the right most edge (Slot 17)
+        else if (i == 17) {
+          rect_width = 15;
+          rect_x = (last_row_x_vals[17] + 19);
+        }
+        
+        // Otherwise standard spacing (minus 2 to give space between histogram boxes)
+        else {
+          rect_width = 36; 
+          rect_x = (last_row_x_vals[i-1] + 19);
+        }
+
+        // Pixel # increase as you go down, so the y-pixel where you start the box is (480 - height of box)
+        rect_y = 480 - rect_height;
+
+        // Draw the rectangle for the given parameters
+        
+        fillRect(rect_x, rect_y, rect_width, rect_height, WHITE);
+      }
+    }
+  }
+}
+
 // Detect wallstrikes, update velocity and position
 void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
 {
-  // Reverse direction if we've hit a wall
-  // if (hitTop(*y)) {
-  //   *vy = (-*vy) ;
-  //   *y  = (*y + int2fix15(5)) ;
-  // }
+  // If a ball hits the bottom
   if (hitBottom(*y)) {
-    // *vy = (-*vy) ;
-    // *y  = (*y - int2fix15(5)) ;
+    updateHistogramVals(&ball->x);
+    displayHistogramVals();
     spawnBall(&ball->x, &ball->y, &ball->vx, &ball->vy, 0);
+    
   } 
   if (hitRight(*x)) {
     *vx = (-*vx) ;
@@ -174,9 +319,6 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
     *x  = (*x + int2fix15(5)) ;
   } 
 
-  // Update position using velocity
-  *x = *x + *vx ;
-  *y = *y + *vy ;
 }
 
 void death(fix15* x, fix15* y, fix15* vx, fix15* vy)
@@ -186,11 +328,8 @@ void death(fix15* x, fix15* y, fix15* vx, fix15* vy)
   }
 }
 
-void drawBoard() {
 
-}
-
-bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y) {
+bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y, fix15* last_peg_y) {
   fix15 dx = *ball_x - *peg_x ;
   fix15 dy = *ball_y - *peg_y ;
   fix15 abs_dx = absfix15(dx) ;
@@ -216,10 +355,12 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
       *ball_vx = *ball_vx + multfix15(normal_x, intermediate_term);
       *ball_vy = *ball_vy + multfix15(normal_y, intermediate_term);
       
-      // start the control channel
-      dma_start_channel_mask(1u << ctrl_chan) ;
-      *ball_vx = 0.5 * *ball_vx;
-      *ball_vy = 0.5 * *ball_vy;
+      if (*last_peg_y != *peg_y) {
+        dma_start_channel_mask(1u << ctrl_chan) ;
+        *ball_vx = multfix15(fix15_0point5, *ball_vx); // FIX MULT?
+        *ball_vy = multfix15(fix15_0point5, *ball_vy);
+      }
+      
     }
   }
 
@@ -295,7 +436,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     }
     // end generated code
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < NUM_BALLS; i++) {
       ball_array[i].x = int2fix15(320) ;
       ball_array[i].y = int2fix15(0) ;
       ball_array[i].vx = int2fix15(0) ;
@@ -307,11 +448,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Measure time at start of thread
       begin_time = time_us_32() ;      
 
-      for (int i = 0; i < 10; i++) {
+      for (int i = 0; i < NUM_BALLS; i++) {
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
         for (int j = 0; j < 136; j++) {
-          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y);
+          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y);
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
         drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
@@ -329,6 +470,22 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     } // END WHILE(1)
   PT_END(pt);
 } // animation thread
+
+// This thread runs on core 0
+static PT_THREAD (protothread_core_0(struct pt *pt))
+{
+    // Indicate thread beginning
+    PT_BEGIN(pt) ;
+
+    while(1) {
+
+        
+
+        PT_YIELD_usec(30000) ;
+    }
+    // Indicate thread end
+    PT_END(pt) ;
+}
 
 
 // Animation on core 1
@@ -443,6 +600,7 @@ int main(){
       sine_table_size,            // Number of transfers
       false                       // Don't start immediately.
   );
+
 
   // add threads
   pt_add_thread(protothread_serial);
