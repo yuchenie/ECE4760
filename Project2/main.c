@@ -64,6 +64,7 @@ typedef signed int fix15 ;
 #define NUM_ROWS 16
 #define NUM_PEGS ((NUM_ROWS * (NUM_ROWS + 1)) / 2)
 
+// Data structures for pegs and balls
 typedef struct
 {
     int x;
@@ -99,12 +100,15 @@ fix15 ball0_y ;
 fix15 ball0_vx ;
 fix15 ball0_vy ;
 fix15 fix15_gravity = float2fix15(0.6) ;
+fix15 fix15_bounciness = float2fix15(0.5);
 fix15 fix15_0 = int2fix15(0) ;
 fix15 fix15_2 = int2fix15(2) ;
+fix15 fix15_128 = int2fix15(128);
 fix15 fix15_neg2 = int2fix15(-2) ;
 fix15 fix15_0point25 = float2fix15(0.25) ;
 fix15 fix15_0point5 = float2fix15(0.5);
 fix15 fix15_10 = int2fix15(10) ;
+fix15 fix15_38 = int2fix15(38);
 
 fix15 peg0_x = int2fix15(320);
 fix15 peg0_y = int2fix15(19);
@@ -114,6 +118,28 @@ fix15 ball1_x ;
 fix15 ball1_y ;
 fix15 ball1_vx ;
 fix15 ball1_vy ;
+
+// Debouncer State Machine variables
+int button_state = 0;
+int prev_button_state = 0;
+int prev_prev_button_state = 0;
+
+
+// State 0: Reset / Update Parameters
+// State 1: Ball Number Modulation
+// State 2: Bounciness Modulation
+int modulation_state = 0;
+
+// Store num of balls before gets locked in
+int temp_NUM_BALLS = 0;
+
+// Store bounciness before gets locked in
+int bounciness_reading;
+fix15 fix15_reading;
+fix15 fix15_temp_bounciness;
+
+// Bounciness for display on VGA
+float bounciness = 0.0;
 
 // Number of samples per period in sine table
 #define sine_table_size 256
@@ -145,25 +171,15 @@ int data_chan ;
 
 #define ADC_PIN 26
 
-// Create a ball
-void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
-{
-  // Start in center of screen
-  *x = int2fix15(320) ;
-  *y = int2fix15(0) ;
-  // Choose left or right
-  // if (direction) *vx = int2fix15(3) ;
-  // else *vx = int2fix15(-3) ;
-  *vx = (fix15) ((rand() & 0xFFFF) - int2fix15(1));
-  *vx = *vx >> 1;
-  // Moving down
-  *vy = int2fix15(0) ;
-}
-
 
 // Number of slots balls could fall through on 16-row galton
 #define SLOT_NUM 17
 #define LAST_ROW_PEG_NUM 17
+
+// maximum height of a box on the histogram (i.e how much space in pixels do we have to work with)
+#define MAX_HEIGHT 140
+
+fix15 fix_MAX_HEIGHT = int2fix15(MAX_HEIGHT);
 
 // Keeps track of how many balls fall in each
 int histogram[SLOT_NUM] ={0};
@@ -172,8 +188,9 @@ int histogram_total = 0;
 // X-values of pegs in the last row
 int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434, 472, 510, 548, 586, 624};
 
-
-fix15 fix15_38 = int2fix15(38);
+// Variables to determine if complete clearing is necesary
+int max_value = 0;
+int prev_max_value = 0;
 
 /*
 
@@ -201,7 +218,8 @@ We can perform a mod by performing fixed width division and converting to int
 */ 
 
 // Updates histogram array, runs when a ball hits the bottom
-void updateHistogramVals(fix15* x) {
+void updateHistogramVals(fix15* x) 
+{
   // Adjust x so taking mod alligns with index
   
   fix15 adjusted_x = *x + 22;
@@ -216,26 +234,22 @@ void updateHistogramVals(fix15* x) {
 }
 
 // Reset histogram back to intial states
-void resetHistogramVals() {
+void resetHistogramVals() 
+{
+  
+  clearLowFrame(323, BLACK);
+  max_value = 0;
+  histogram_total = 0;
+
   // Set all entries back to zero
   for (int i=0; i<SLOT_NUM; i++) {
     histogram[i] = 0;
   }
 }
 
-// maximum height of a box on the histogram (i.e how much space in pixels do we have to work with)
-#define MAX_HEIGHT 140
-
-fix15 fix_MAX_HEIGHT = int2fix15(MAX_HEIGHT);
-
-int max_value = 0;
-int prev_max_value = 0;
-
 // Draw histogram boxes 
-void displayHistogramVals() {
-  // Black out the previous histogram
-  //clearLowFrame(323, BLACK);
-  
+void displayHistogramVals() 
+{
   // Figure out what the maximum balls contained in one "slot" is
   for (int i=0; i<SLOT_NUM; i++) {
     if (histogram[i] > max_value) {
@@ -278,7 +292,7 @@ void displayHistogramVals() {
 
         // Slots on the left most edge (Slot 0)
         if (i==0) {
-          rect_width   = 15;
+          rect_width   = 33;
           rect_x  = 0; 
         }
 
@@ -305,20 +319,42 @@ void displayHistogramVals() {
   }
 }
 
+// Spawn/respawn a ball
+void spawnBall(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
+{
+  // Start in center of screen
+  *x = int2fix15(320) ;
+  *y = int2fix15(0) ;
+  // Choose left or right
+  // if (direction) *vx = int2fix15(3) ;
+  // else *vx = int2fix15(-3) ;
+  *vx = (fix15) ((rand() & 0xFFFF) - int2fix15(1));
+  *vx = *vx >> 1;
+  // Moving down
+  *vy = int2fix15(0) ;
+}
+
 // Detect wallstrikes, update velocity and position
 void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
 {
-  // If a ball hits the bottom
+  // If a ball hits the bottom...
   if (hitBottom(*y)) {
+    // Update the histogram display
     updateHistogramVals(&ball->x);
     displayHistogramVals();
     histogram_total++;
+
+    // Respawn the ball
     spawnBall(&ball->x, &ball->y, &ball->vx, &ball->vy, 0);
   } 
+  
+  // If a ball hits the right wall...
   if (hitRight(*x)) {
     *vx = (-*vx) ;
     *x  = (*x - int2fix15(5)) ;
   }
+  
+  // If a ball hits the left wall...
   if (hitLeft(*x)) {
     *vx = (-*vx) ;
     *x  = (*x + int2fix15(5)) ;
@@ -326,15 +362,9 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
 
 }
 
-void death(fix15* x, fix15* y, fix15* vx, fix15* vy)
+// Collision physics
+bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y, fix15* last_peg_y) 
 {
-  if (hitBottom(*y)) {
-    spawnBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, 0);
-  }
-}
-
-
-bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y, fix15* last_peg_y) {
   fix15 dx = *ball_x - *peg_x ;
   fix15 dy = *ball_y - *peg_y ;
   fix15 abs_dx = absfix15(dx) ;
@@ -362,8 +392,8 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
       
       if (*last_peg_y != *peg_y) {
         dma_start_channel_mask(1u << ctrl_chan) ;
-        *ball_vx = multfix15(fix15_0point5, *ball_vx); // FIX MULT?
-        *ball_vy = multfix15(fix15_0point5, *ball_vy);
+        *ball_vx = multfix15(fix15_bounciness, *ball_vx); 
+        *ball_vy = multfix15(fix15_bounciness, *ball_vy);
       }
       
     }
@@ -372,45 +402,16 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
   return absfix15(dist) < fix15_10;
 }
 
-void moveBall(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy) {
+// Updating ball position and adding gravity
+void moveBall(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy) 
+{
   *ball_vy = *ball_vy + fix15_gravity ;
   *ball_x = *ball_x + *ball_vx ;
   *ball_y = *ball_y + *ball_vy ;
 }
 
-// ==================================================
-// === users serial input thread
-// ==================================================
-static PT_THREAD (protothread_serial(struct pt *pt))
-{
-    PT_BEGIN(pt);
-    // stores user input
-    static int user_input ;
-    // wait for 0.1 sec
-    PT_YIELD_usec(1000000) ;
-    // announce the threader version
-    sprintf(pt_serial_out_buffer, "Protothreads RP2040 v1.0\n\r");
-    // non-blocking write
-    serial_write ;
-      while(1) {
-        // print prompt
-        sprintf(pt_serial_out_buffer, "input a number in the range 1-15: ");
-        // non-blocking write
-        serial_write ;
-        // spawn a thread to do the non-blocking serial read
-        serial_read ;
-        // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &user_input) ;
-        // update ball color
-        if ((user_input > 0) && (user_input < 16)) {
-          color = (char)user_input ;
-        }
-      } // END WHILE(1)
-  PT_END(pt);
-} // timer thread
-
 // Animation on core 0
-static PT_THREAD (protothread_anim(struct pt *pt))
+static PT_THREAD (protothread_anim0(struct pt *pt))
 {
     // Mark beginning of thread
     PT_BEGIN(pt);
@@ -479,38 +480,6 @@ static PT_THREAD (protothread_anim(struct pt *pt))
   PT_END(pt);
 } // animation thread
 
-// This thread runs on core 0
-static PT_THREAD (protothread_core_0(struct pt *pt))
-{
-    // Indicate thread beginning
-    PT_BEGIN(pt) ;
-
-    while(1) {
-      NUM_BALLS = adc_read() >> 4;        
-   
-      setTextColor2(WHITE, BLACK) ;
-      setTextSize(1) ;
-      char buffer[50];
-      
-      setCursor(10, 0) ;
-      sprintf(buffer, "ACTIVE BALL COUNT: %04d", NUM_BALLS);
-      writeString(buffer) ;
-      
-      setCursor(10, 10) ;
-      sprintf(buffer, "TOTAL BALLS DROPPED: %d", histogram_total);
-      writeString(buffer) ;
-
-      setCursor(10, 20) ;
-      sprintf(buffer, "TIME: %d us", time_us_32());
-      writeString(buffer) ;
-
-        PT_YIELD_usec(30000) ;
-    }
-    // Indicate thread end
-    PT_END(pt) ;
-}
-
-
 // Animation on core 1
 static PT_THREAD (protothread_anim1(struct pt *pt))
 {
@@ -548,6 +517,99 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
   PT_END(pt);
 } // animation thread
 
+// Button and potentiometer input thread
+static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
+{
+    // Indicate thread beginning
+    PT_BEGIN(pt) ;
+
+    while(1) {
+      
+      // Get button state
+      button_state = gpio_get(28);
+      
+      // Debouncer State Machine
+      if (button_state == 1 && button_state == prev_button_state && prev_button_state != prev_prev_button_state) {
+        modulation_state++;
+        
+        // Wrapping behavior (States go 0, 1, 2, 0, 1, 2 etc)
+        if (modulation_state == 3){
+          modulation_state = 0;
+        }
+      }
+      
+      // State 0: Initial reset state, and also "update" state where parameters get updated from the adjusted values
+      if (modulation_state == 0) {
+        
+        // If parameters have changed...
+        if (NUM_BALLS != temp_NUM_BALLS || fix15_bounciness != fix15_temp_bounciness) {
+          // Reset the histogram
+          resetHistogramVals();
+        }
+        
+        // Set simulation values using adjusted values by user
+        NUM_BALLS = temp_NUM_BALLS;
+        fix15_bounciness = fix15_temp_bounciness;
+      }
+
+      // State 1: Modulating the number of balls
+      else if (modulation_state == 1) {
+        temp_NUM_BALLS = adc_read() >> 4;  
+      }
+
+      // State 2: Modulating the bounciness parameter
+      else if (modulation_state == 2) {
+        // Scale bounciness with 128 resolution from 0 to 1
+        bounciness_reading = adc_read() >> 5;
+        fix15_reading = int2fix15(bounciness_reading);
+
+        // Update temp bounciness to be set in state 0
+        fix15_temp_bounciness = divfix(fix15_reading, fix15_128);
+        
+        // Update bounciness for display on VGA
+        bounciness = fix2float15(fix15_temp_bounciness);
+      }
+
+      // Write text to screen
+      setTextColor2(WHITE, BLACK) ;
+      setTextSize(1) ;
+      char buffer[50];
+      
+      setCursor(10, 0) ;
+      sprintf(buffer, "ACTIVE BALL COUNT: %04d", NUM_BALLS);
+      writeString(buffer) ;
+      
+      setCursor(10, 10) ;
+      sprintf(buffer, "TOTAL BALLS DROPPED: %d", histogram_total);
+      writeString(buffer) ;
+
+      setCursor(10, 20) ;
+      sprintf(buffer, "TIME: %d us", time_us_32());
+      writeString(buffer) ;
+
+      setCursor(10, 30) ;
+      sprintf(buffer, "STATE: %d ", modulation_state);
+      writeString(buffer) ;
+
+      setCursor(10, 40) ;
+      sprintf(buffer, "DESIRED BALLS: %04d", temp_NUM_BALLS);
+      writeString(buffer) ;
+
+      setCursor(10, 50) ;
+      sprintf(buffer, "DESIRED BOUNCINESS: %f", bounciness);
+      writeString(buffer) ;
+
+      // Update state machine variables
+      prev_prev_button_state = prev_button_state;
+      prev_button_state = button_state;
+      
+      PT_YIELD_usec(30000) ;
+    }
+    // Indicate thread end
+    PT_END(pt) ;
+}
+
+// Set up core 1 thread
 void core1_main(){
   // Add animation thread
   pt_add_thread(protothread_anim1);
@@ -570,7 +632,7 @@ int main(){
   multicore_reset_core1();
   multicore_launch_core1(&core1_main);
 
-// Initialize SPI channel (channel, baud rate set to 20MHz)
+  // Initialize SPI channel (channel, baud rate set to 20MHz)
   spi_init(SPI_PORT, 20000000) ;
 
   // Format SPI channel (channel, data bits per transfer, polarity, phase, order)
@@ -636,11 +698,15 @@ int main(){
   adc_gpio_init(ADC_PIN);
   adc_select_input(0);
 
+  // set up gpio for button input
+  gpio_init(28);
+  gpio_set_dir(28, GPIO_IN);
+  gpio_pull_down(28);
+
   // add threads
-  pt_add_thread(protothread_serial);
-  pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_anim0);
   pt_add_thread(protothread_anim1);
-  pt_add_thread(protothread_core_0);
+  pt_add_thread(protothread_user_input_and_display);
 
   // start scheduler
   pt_schedule_start ;
