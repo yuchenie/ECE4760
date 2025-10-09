@@ -192,6 +192,8 @@ int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434
 int max_value = 0;
 int prev_max_value = 0;
 
+int peg_indexer[16] = {0, 0, 1, 3, 6, 10, 15, 22, 36, 45, 55, 66, 78, 91, 105, 120};
+
 /*
 
 Histogram based on x-value when ball hits bottom:
@@ -422,11 +424,12 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
     // begin generated code
     int start_x = 320;
-    int start_y = 24;
+    int start_y = 19;
     int peg_index = 0;
 
     for (int row = 0; row < NUM_ROWS; row++) {
         int y = start_y + row * VERTICAL_SPACING;
+        printf("%d, %d", y, peg_index);
 
         for (int col = 0; col <= row; col++) {
             // center pegs in each row under start_x
@@ -454,17 +457,25 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       begin_time = time_us_32() ;    
 
       for (int i = NUM_BALLS; i < MAX_BALLS; i+=2) {
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 0; i < NUM_BALLS; i+=2) {
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
         for (int j = 0; j < 136; j++) {
-          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y);
+          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y)) {
+            break;
+          }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
       }
 
       for (int i = 0; i < 136; i++) {
@@ -495,17 +506,26 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       begin_time = time_us_32() ;    
 
       for (int i = NUM_BALLS+1; i < MAX_BALLS; i+=2) {
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 1; i < NUM_BALLS; i+=2) {
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
+
         for (int j = 0; j < 136; j++) {
-          collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y);
+          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y)) {
+            break;
+          }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
-        drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, GREEN);
+        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, GREEN);
+        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
+        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
       }
       
       // delay in accordance with frame rate
@@ -554,7 +574,7 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
 
       // State 1: Modulating the number of balls
       else if (modulation_state == 1) {
-        temp_NUM_BALLS = adc_read() >> 4;  
+        temp_NUM_BALLS = (adc_read() >> 4) << 4;  
       }
 
       // State 2: Modulating the bounciness parameter
@@ -575,13 +595,13 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
       setTextSize(1) ;
       char buffer[50];
       
-      setCursor(10, 0) ;
+      setCursor(10, 10) ;
       sprintf(buffer, "ACTIVE BALL COUNT: %04d", NUM_BALLS);
       writeString(buffer) ;
       
-      setCursor(10, 10) ;
-      sprintf(buffer, "TOTAL BALLS DROPPED: %d", histogram_total);
-      writeString(buffer) ;
+      // setCursor(10, 10) ;
+      // sprintf(buffer, "TOTAL BALLS DROPPED: %d", histogram_total);
+      // writeString(buffer) ;
 
       setCursor(10, 20) ;
       sprintf(buffer, "TIME: %d us", time_us_32());
@@ -619,7 +639,7 @@ void core1_main(){
 }
 
 int main(){
-  set_sys_clock_khz(150000, true) ;
+  set_sys_clock_khz(250000, true) ;
   // initialize stio
   stdio_init_all() ;
 
