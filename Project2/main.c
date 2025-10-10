@@ -69,8 +69,6 @@ typedef struct
 {
     int x;
     int y;
-    int fix15_x;
-    int fix15_y;
 } peg;
 
 typedef struct
@@ -82,7 +80,7 @@ typedef struct
     fix15 last_peg_y;
 } ball;
 
-#define MAX_BALLS 1500
+#define MAX_BALLS 4095
 volatile int NUM_BALLS = 0;
 
 peg peg_array[136] ;
@@ -103,7 +101,7 @@ fix15 fix15_gravity = float2fix15(0.6) ;
 fix15 fix15_bounciness = float2fix15(0.5);
 fix15 fix15_0 = int2fix15(0) ;
 fix15 fix15_2 = int2fix15(2) ;
-fix15 fix15_128 = int2fix15(128);
+fix15 fix15_160 = int2fix15(160);
 fix15 fix15_neg2 = int2fix15(-2) ;
 fix15 fix15_0point25 = float2fix15(0.25) ;
 fix15 fix15_0point5 = float2fix15(0.5);
@@ -192,7 +190,7 @@ int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434
 int max_value = 0;
 int prev_max_value = 0;
 
-int peg_indexer[16] = {0, 0, 1, 3, 6, 10, 15, 22, 36, 45, 55, 66, 78, 91, 105, 120};
+int peg_indexer[19] = {0, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91, 105, 120, 136, 136};
 
 /*
 
@@ -315,7 +313,7 @@ void displayHistogramVals()
 
         // Draw the rectangle for the given parameters
         
-        fillRect(rect_x, rect_y, rect_width, rect_height, WHITE);
+        drawRect(rect_x, rect_y, rect_width, rect_height, WHITE);
       }
     }
   }
@@ -365,10 +363,12 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
 }
 
 // Collision physics
-bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* peg_x, fix15* peg_y, fix15* last_peg_y) 
+bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15* int_peg_x, fix15* int_peg_y, fix15* last_peg_y) 
 {
-  fix15 dx = *ball_x - *peg_x ;
-  fix15 dy = *ball_y - *peg_y ;
+  fix15 peg_x = int2fix15(*int_peg_x);
+  fix15 peg_y = int2fix15(*int_peg_y);
+  fix15 dx = *ball_x - peg_x ;
+  fix15 dy = *ball_y - peg_y ;
   fix15 abs_dx = absfix15(dx) ;
   fix15 abs_dy = absfix15(dy) ;
   fix15 dist ;
@@ -386,19 +386,21 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
     fix15 intermediate_term = multfix15(fix15_neg2, (multfix15(normal_x, *ball_vx) + multfix15(normal_y, *ball_vy)));
    
     if (intermediate_term > fix15_0) {
-      *ball_x = *peg_x + multfix15(normal_x, (dist+fix15_2));
-      *ball_y = *peg_y + multfix15(normal_y, (dist+fix15_2));
+      *ball_x = peg_x + multfix15(normal_x, (dist+fix15_2));
+      *ball_y = peg_y + multfix15(normal_y, (dist+fix15_2));
 
       *ball_vx = *ball_vx + multfix15(normal_x, intermediate_term);
       *ball_vy = *ball_vy + multfix15(normal_y, intermediate_term);
       
-      if (*last_peg_y != *peg_y) {
+      if (*last_peg_y != peg_y) {
         dma_start_channel_mask(1u << ctrl_chan) ;
         *ball_vx = multfix15(fix15_bounciness, *ball_vx); 
         *ball_vy = multfix15(fix15_bounciness, *ball_vy);
       }
       
     }
+
+    // drawCircle(*peg_x, *peg_y, 6, WHITE);
   }
 
   return absfix15(dist) < fix15_10;
@@ -429,7 +431,6 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
     for (int row = 0; row < NUM_ROWS; row++) {
         int y = start_y + row * VERTICAL_SPACING;
-        printf("%d, %d", y, peg_index);
 
         for (int col = 0; col <= row; col++) {
             // center pegs in each row under start_x
@@ -437,8 +438,6 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
             peg_array[peg_index].x = x;
             peg_array[peg_index].y = y;
-            peg_array[peg_index].fix15_x = int2fix15(x);
-            peg_array[peg_index].fix15_y = int2fix15(y);
             peg_index++;
         }
     }
@@ -458,24 +457,28 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
       for (int i = NUM_BALLS; i < MAX_BALLS; i+=2) {
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 0; i < NUM_BALLS; i+=2) {
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
-        for (int j = 0; j < 136; j++) {
-          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y)) {
+        // divfix(ball_array[i].y, int2fix15(19));
+
+        int test = fix2int15(ball_array[i].y) / 19;
+                
+        for (int j = peg_indexer[test]; j < peg_indexer[test+2]; j++) {
+          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].x, &peg_array[j].y,&ball_array[i].last_peg_y)) {
             break;
           }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
       }
 
       for (int i = 0; i < 136; i++) {
@@ -507,25 +510,28 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
 
       for (int i = NUM_BALLS+1; i < MAX_BALLS; i+=2) {
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 1; i < NUM_BALLS; i+=2) {
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
+        // divfix(ball_array[i].y, 19);
 
-        for (int j = 0; j < 136; j++) {
-          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].fix15_x, &peg_array[j].fix15_y,&ball_array[i].last_peg_y)) {
+        int test = fix2int15(ball_array[i].y) / 19;
+
+        for (int j = peg_indexer[test]; j < peg_indexer[test+2]; j++) {
+          if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].x, &peg_array[j].y,&ball_array[i].last_peg_y)) {
             break;
           }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
         // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, GREEN);
-        // drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
-        drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
+        drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
+        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
       }
       
       // delay in accordance with frame rate
@@ -542,6 +548,7 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
 {
     // Indicate thread beginning
     PT_BEGIN(pt) ;
+    static int ms_30 = 0;
 
     while(1) {
       
@@ -584,7 +591,7 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
         fix15_reading = int2fix15(bounciness_reading);
 
         // Update temp bounciness to be set in state 0
-        fix15_temp_bounciness = divfix(fix15_reading, fix15_128);
+        fix15_temp_bounciness = divfix(fix15_reading, fix15_160);
         
         // Update bounciness for display on VGA
         bounciness = fix2float15(fix15_temp_bounciness);
@@ -604,7 +611,7 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
       // writeString(buffer) ;
 
       setCursor(10, 20) ;
-      sprintf(buffer, "TIME: %d us", time_us_32());
+      sprintf(buffer, "TIME: %d s", ms_30 / 30);
       writeString(buffer) ;
 
       setCursor(10, 30) ;
@@ -622,6 +629,8 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
       // Update state machine variables
       prev_prev_button_state = prev_button_state;
       prev_button_state = button_state;
+
+      ms_30++;
       
       PT_YIELD_usec(30000) ;
     }
