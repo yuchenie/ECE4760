@@ -81,7 +81,7 @@ typedef struct
 } ball;
 
 #define MAX_BALLS 4095
-volatile int NUM_BALLS = 0;
+volatile int NUM_BALLS = 4095;
 
 peg peg_array[136] ;
 ball ball_array[MAX_BALLS] ;
@@ -90,7 +90,9 @@ ball ball_array[MAX_BALLS] ;
 #define FRAME_RATE 33000
 
 // the color of the ball
-char color = WHITE ;
+char WHITE = 1 ;
+char BLACK = 0 ;
+// char color = WHITE ;
 
 // ball on core 0
 fix15 ball0_x ;
@@ -341,7 +343,7 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
   if (hitBottom(*y)) {
     // Update the histogram display
     updateHistogramVals(&ball->x);
-    displayHistogramVals();
+    // displayHistogramVals();
     histogram_total++;
 
     // Respawn the ball
@@ -735,7 +737,7 @@ int main(){
   // add threads
   pt_add_thread(protothread_anim0);
   pt_add_thread(protothread_anim1);
-  pt_add_thread(protothread_user_input_and_display);
+  // pt_add_thread(protothread_user_input_and_display);
 
   // start scheduler
   pt_schedule_start ;

@@ -8,7 +8,8 @@
 ; define the pixel hold times which depend on clock freq
 ; pixel1hold should be 5 for 150 MHz  (4 for 125 MHz)
 ; pixel2hold should be 3 for 150 MHz  (2 for 125 MHz)
-.define pixel1hold 8
+.define pixel1hold 5
+.define pixel2hold 3
 .define PUBLIC vid_freq 250
 
 pull block 					; Pull from FIFO to OSR (only once)
@@ -21,7 +22,9 @@ mov x, y 					; Initialize counter variable
 wait 1 irq 1 [3]			; Wait for vsync active mode (starts 5 cycles after execution)
 
 colorout:
-	out pins, 1	[pixel1hold]	; Push out to pins (first pixel)
+	pull block				; Pull color value
+	out pins, 4	[pixel1hold]	; Push out to pins (first pixel)
+	out pins, 4	[pixel2hold]	; Push out to pins (next pixel)
 	jmp x-- colorout		; Stay here thru horizontal active mode
 
 .wrap
@@ -48,10 +51,9 @@ static inline void rgb_program_init(PIO pio, uint sm, uint offset, uint pin) {
 
     // Set this pin's GPIO function (connect PIO to the pad)
     pio_gpio_init(pio, pin);
-    sm_config_set_out_shift (&c, true, true, 8) ;
-    // pio_gpio_init(pio, pin+1);
-    // pio_gpio_init(pio, pin+2);
-    // pio_gpio_init(pio, pin+3);
+    pio_gpio_init(pio, pin+1);
+    pio_gpio_init(pio, pin+2);
+    pio_gpio_init(pio, pin+3);
     
     // Set the pin direction to output at the PIO (3 pins)
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 4, true);
