@@ -44,7 +44,10 @@
 #include "pt_cornell_rp2040_v1_4.h"
 
 #define ADC_PIN 26
-volatile int duty = 0;
+volatile float duty_cycle = 0;
+volatile fix15 setpoint = int2fix15(10);
+volatile fix15 accel_angle, gyro_angle, gyro_angle_delta, complementary_angle;
+float kP = 0.01;
 
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
@@ -69,22 +72,37 @@ static struct pt_sem vga_semaphore ;
 #define MAX_PWM 4200
 uint slice_num ;
 
+float constrain(float value, float min, float max) {
+    if (value > max) {
+        return max;
+    } else if (value < min) {
+        return min;
+    } else {
+        return value;
+    }
+}
+
 // Interrupt service routine
 void on_pwm_wrap() {
 
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
 
-    duty = (int) ( ( (float) adc_read() / 4095.0f ) * MAX_PWM );
+    float raw_duty_cycle = kP * fix2float15(setpoint - complementary_angle) ;
+    duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
+    int duty = (int) (constrain(duty_cycle, 0.0, 1.0) * MAX_PWM);
     pwm_set_chan_level(slice_num, PWM_CHAN_B, duty);
     pwm_set_chan_level(slice_num, PWM_CHAN_A, duty);
-    printf("%d\n", duty);
 
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
     // If you want these values in floating point, call fix2float15() on
     // the raw measurements.
     mpu6050_read_raw(acceleration, gyro);
+    accel_angle = multfix15(float2fix15(atan2(acceleration[2], acceleration[1])), oneeightyoverpi);
+    gyro_angle_delta = multfix15(-gyro[0], zeropt001);
+    // gyro_angle += gyro_angle_delta;
+    complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
@@ -157,14 +175,37 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             drawVLine(xcoord, 0, 480, BLACK) ;
 
             // Draw bottom plot (multiply by 120 to scale from +/-2 to +/-250)
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            drawPixel(xcoord, 430 - (int)(NewRange*((float)((duty_cycle*120.0)-OldMin)/OldRange)), WHITE) ;
 
             // Draw top plot
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
+            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(complementary_angle))-OldMin)/OldRange)), WHITE) ;
+            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(setpoint))-OldMin)/OldRange)), GREEN) ;
+
+            setTextColor2(WHITE, BLACK) ;
+            setTextSize(1) ;
+            char buffer[50];
+            
+            setCursor(10, 10) ;
+            sprintf(buffer, "RECORDED ANGLE: %f", fix2float15(complementary_angle));
+            writeString(buffer) ;
+
+            setCursor(10, 20) ;
+            sprintf(buffer, "SETPOINT ANGLE: %f", fix2float15(setpoint));
+            writeString(buffer) ;
+
+            setCursor(10, 30) ;
+            sprintf(buffer, "DUTY: %f", duty_cycle);
+            writeString(buffer) ;
+            
+            setCursor(10, 40) ;
+            sprintf(buffer, "kP: %f", kP);
+            writeString(buffer) ;
 
             // Update horizontal cursor
             if (xcoord < 609) {
@@ -184,27 +225,32 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
     static char classifier ;
-    static int test_in ;
+    static float test_setpoint ;
+    static float test_kP ;
     static float float_in ;
     while(1) {
         sprintf(pt_serial_out_buffer, "input a command: ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
-        // convert input string to number
-        sscanf(pt_serial_in_buffer,"%c", &classifier) ;
+        
+        sscanf(pt_serial_in_buffer,"%f %f", &test_setpoint, &test_kP) ;
+        setpoint = float2fix15(constrain(test_setpoint, 10.0, 150.0)) ;
+        kP = test_kP ;
+        // // convert input string to number
+        // sscanf(pt_serial_in_buffer,"%c", &classifier) ;
 
-        // num_independents = test_in ;
-        if (classifier=='t') {
-            sprintf(pt_serial_out_buffer, "timestep: ");
-            serial_write ;
-            serial_read ;
-            // convert input string to number
-            sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-            if (test_in > 0) {
-                threshold = test_in ;
-            }
-        }
+        // // num_independents = test_in ;
+        // if (classifier=='t') {
+        //     sprintf(pt_serial_out_buffer, "timestep: ");
+        //     serial_write ;
+        //     serial_read ;
+        //     // convert input string to number
+        //     sscanf(pt_serial_in_buffer,"%d", &test_in) ;
+        //     if (test_in > 0) {
+        //         threshold = test_in ;
+        //     }
+        // }
     }
     PT_END(pt) ;
 }

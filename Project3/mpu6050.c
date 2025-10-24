@@ -42,6 +42,7 @@ void mpu6050_read_raw(fix15 accel[3], fix15 gyro[3]) {
 
     uint8_t buffer[6];
     int16_t temp_accel, temp_gyro ;
+    fix15 raw_accel[3] ;
 
     // Start reading acceleration registers from register 0x3B for 6 bytes
     uint8_t val = 0x3B;
@@ -50,8 +51,9 @@ void mpu6050_read_raw(fix15 accel[3], fix15 gyro[3]) {
 
     for (int i = 0; i < 3; i++) {
         temp_accel = (buffer[i<<1] << 8 | buffer[(i<<1) + 1]);
-        accel[i] = temp_accel ;
-        accel[i] <<= 2 ; // convert to g's (fixed point)
+        raw_accel[i] = temp_accel ;
+        raw_accel[i] <<= 2 ; // convert to g's (fixed point)
+        accel[i] = accel[i] + ((raw_accel[i] - accel[i])>>4);
     }
 
     // Now gyro data from reg 0x43 for 6 bytes
