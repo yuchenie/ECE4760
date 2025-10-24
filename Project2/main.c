@@ -81,7 +81,7 @@ typedef struct
 } ball;
 
 #define MAX_BALLS 4095
-volatile int NUM_BALLS = 4095;
+volatile int NUM_BALLS = 0;
 
 peg peg_array[136] ;
 ball ball_array[MAX_BALLS] ;
@@ -90,9 +90,7 @@ ball ball_array[MAX_BALLS] ;
 #define FRAME_RATE 33000
 
 // the color of the ball
-char WHITE = 1 ;
-char BLACK = 0 ;
-// char color = WHITE ;
+char color = WHITE ;
 
 // ball on core 0
 fix15 ball0_x ;
@@ -192,6 +190,7 @@ int last_row_x_vals[] = {16, 54, 92, 130, 168, 206, 244, 282, 320, 358, 396, 434
 int max_value = 0;
 int prev_max_value = 0;
 
+// determine the index into the peg array corresponding with the first peg in each row
 int peg_indexer[19] = {0, 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91, 105, 120, 136, 136};
 
 /*
@@ -314,7 +313,6 @@ void displayHistogramVals()
         rect_y = 480 - rect_height;
 
         // Draw the rectangle for the given parameters
-        
         drawRect(rect_x, rect_y, rect_width, rect_height, WHITE);
       }
     }
@@ -343,7 +341,7 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy, ball* ball)
   if (hitBottom(*y)) {
     // Update the histogram display
     updateHistogramVals(&ball->x);
-    // displayHistogramVals();
+    displayHistogramVals();
     histogram_total++;
 
     // Respawn the ball
@@ -375,6 +373,7 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
   fix15 abs_dy = absfix15(dy) ;
   fix15 dist ;
 
+  // square root approximation
   if (abs_dx > abs_dy) {
     dist = abs_dx + multfix15(fix15_0point25, abs_dy);
   } else {
@@ -401,8 +400,6 @@ bool collide(fix15* ball_x, fix15* ball_y, fix15* ball_vx, fix15* ball_vy, fix15
       }
       
     }
-
-    // drawCircle(*peg_x, *peg_y, 6, WHITE);
   }
 
   return absfix15(dist) < fix15_10;
@@ -426,7 +423,7 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
-    // begin generated code
+    // ################## BEGIN AI-GENERATED CODE ##################
     int start_x = 320;
     int start_y = 19;
     int peg_index = 0;
@@ -443,8 +440,9 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
             peg_index++;
         }
     }
-    // end generated code
+    // ################### END AI-GENERATED CODE ###################
 
+    // initialize all balls first
     for (int i = 0; i < MAX_BALLS; i++) {
       ball_array[i].x = int2fix15(320) ;
       ball_array[i].y = int2fix15(0) ;
@@ -458,40 +456,30 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       begin_time = time_us_32() ;    
 
       for (int i = NUM_BALLS; i < MAX_BALLS; i+=2) {
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 0; i < NUM_BALLS; i+=2) {
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
-        // divfix(ball_array[i].y, int2fix15(19));
 
         int test = fix2int15(ball_array[i].y) / 19;
                 
+        // only check nearest three rows
         for (int j = peg_indexer[test]; j < peg_indexer[test+2]; j++) {
           if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].x, &peg_array[j].y,&ball_array[i].last_peg_y)) {
             break;
           }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, WHITE);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
-      }
-
-      for (int i = 0; i < 136; i++) {
-        drawCircle(peg_array[i].x, peg_array[i].y, 6, WHITE);
       }
       
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
       PT_YIELD_usec(spare_time) ;
-     // NEVER exit while
+      // NEVER exit while
     } // END WHILE(1)
   PT_END(pt);
 } // animation thread
@@ -511,29 +499,23 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       begin_time = time_us_32() ;    
 
       for (int i = NUM_BALLS+1; i < MAX_BALLS; i+=2) {
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
       }
 
       for (int i = 1; i < NUM_BALLS; i+=2) {
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, BLACK);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), BLACK);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, BLACK);
         wallsAndEdges(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &ball_array[i]) ;
-        // divfix(ball_array[i].y, 19);
 
         int test = fix2int15(ball_array[i].y) / 19;
 
+        // only check nearest three rows
         for (int j = peg_indexer[test]; j < peg_indexer[test+2]; j++) {
           if (collide(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy, &peg_array[j].x, &peg_array[j].y,&ball_array[i].last_peg_y)) {
             break;
           }
         }
         moveBall(&ball_array[i].x, &ball_array[i].y, &ball_array[i].vx, &ball_array[i].vy);
-        // drawCircle(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 4, GREEN);
         drawPixel(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), WHITE);
-        // drawRect(fix2int15(ball_array[i].x), fix2int15(ball_array[i].y), 2, 2, WHITE);
       }
       
       // delay in accordance with frame rate
@@ -553,6 +535,10 @@ static PT_THREAD (protothread_user_input_and_display(struct pt *pt))
     static int ms_30 = 0;
 
     while(1) {
+      
+      for (int i = 0; i < 136; i++) {
+        drawCircle(peg_array[i].x, peg_array[i].y, 6, WHITE);
+      }
       
       // Get button state
       button_state = gpio_get(28);
@@ -645,7 +631,7 @@ void core1_main(){
   // Add animation thread
   pt_add_thread(protothread_anim1);
   // Start the scheduler
-  // pt_schedule_start ;
+  pt_schedule_start ;
 
 }
 
@@ -736,8 +722,7 @@ int main(){
 
   // add threads
   pt_add_thread(protothread_anim0);
-  pt_add_thread(protothread_anim1);
-  // pt_add_thread(protothread_user_input_and_display);
+  pt_add_thread(protothread_user_input_and_display);
 
   // start scheduler
   pt_schedule_start ;

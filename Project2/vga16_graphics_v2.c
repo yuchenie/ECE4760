@@ -37,12 +37,11 @@
 // VGA timing constants
 #define H_ACTIVE   655    // (active + frontporch - 1) - one cycle delay for mov
 #define V_ACTIVE   479    // (active - 1)
-// #define RGB_ACTIVE 319    // (horizontal active)/2 - 1
-#define RGB_ACTIVE 639 // change to this if 1 pixel/byte
+#define RGB_ACTIVE 319    // (horizontal active)/2 - 1
+// #define RGB_ACTIVE 639 // change to this if 1 pixel/byte
 
 // Length of the pixel array, and number of DMA transfers
-// #define TXCOUNT 153600 // Total pixels/2 (since we have 2 pixels per byte)
-#define TXCOUNT 38400 // Total pixels/8 
+#define TXCOUNT 153600 // Total pixels/2 (since we have 2 pixels per byte)
 
 // Pixel color array that is DMA's to the PIO machines and
 // a pointer to the ADDRESS of this color array.
@@ -197,30 +196,11 @@ void drawPixel(short x, short y, char color) {
     // Is this pixel stored in the first 4 bits
     // of the vga data array index, or the second
     // 4 bits? Check, then mask.
-    // if (pixel & 1) {
-    //     vga_data_array[pixel>>1] = (vga_data_array[pixel>>1] & TOPMASK) | (color << 4) ;
-    // }
-    // else {
-    //     vga_data_array[pixel>>1] = (vga_data_array[pixel>>1] & BOTTOMMASK) | (color) ;
-    // }
-
-    int lsbs = pixel & 0b111;
-    if (lsbs == 7) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b01111111) | (color << 7) ;
-    } else if (lsbs == 6) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b10111111) | (color << 6) ;
-    } else if (lsbs == 5) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11011111) | (color << 5) ;
-    } else if (lsbs == 4) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11101111) | (color << 4) ;
-    } else if (lsbs == 3) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11110111) | (color << 3) ;
-    } else if (lsbs == 2) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11111011) | (color << 2) ;
-    } else if (lsbs == 1) {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11111101) | (color << 1) ;
-    } else {
-        vga_data_array[pixel>>3] = (vga_data_array[pixel>>3] & 0b11111110) | (color) ;
+    if (pixel & 1) {
+        vga_data_array[pixel>>1] = (vga_data_array[pixel>>1] & TOPMASK) | (color << 4) ;
+    }
+    else {
+        vga_data_array[pixel>>1] = (vga_data_array[pixel>>1] & BOTTOMMASK) | (color) ;
     }
 }
 
