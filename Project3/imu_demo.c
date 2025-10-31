@@ -47,7 +47,12 @@
 volatile float duty_cycle = 0;
 volatile fix15 setpoint = int2fix15(10);
 volatile fix15 accel_angle, gyro_angle, gyro_angle_delta, complementary_angle;
-float kP = 0.01;
+
+// default good, tuned values for our setpoint
+volatile float kP = 0.05;
+volatile float kI = 0.00005;
+volatile float kD = 0.0075;
+volatile fix15 fix_error_accumulator = 0;
 
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
@@ -88,12 +93,6 @@ void on_pwm_wrap() {
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
 
-    float raw_duty_cycle = kP * fix2float15(setpoint - complementary_angle) ;
-    duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
-    int duty = (int) (constrain(duty_cycle, 0.0, 1.0) * MAX_PWM);
-    pwm_set_chan_level(slice_num, PWM_CHAN_B, duty);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, duty);
-
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
     // If you want these values in floating point, call fix2float15() on
@@ -101,8 +100,16 @@ void on_pwm_wrap() {
     mpu6050_read_raw(acceleration, gyro);
     accel_angle = multfix15(float2fix15(atan2(acceleration[2], acceleration[1])), oneeightyoverpi);
     gyro_angle_delta = multfix15(-gyro[0], zeropt001);
-    // gyro_angle += gyro_angle_delta;
     complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+
+    fix15 fix_error_current = setpoint - complementary_angle;
+    fix_error_accumulator += fix_error_current;
+    
+    float raw_duty_cycle = kP * fix2float15(fix_error_current) + kI * fix2float15(fix_error_accumulator) + kD * fix2float15(gyro[0]);
+    duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
+    int duty = (int) (constrain(duty_cycle, 0.0, 1.0) * MAX_PWM);
+    pwm_set_chan_level(slice_num, PWM_CHAN_B, duty);
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, duty);
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
@@ -206,6 +213,14 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             setCursor(10, 40) ;
             sprintf(buffer, "kP: %f", kP);
             writeString(buffer) ;
+            
+            setCursor(10, 50) ;
+            sprintf(buffer, "kI: %f", kI);
+            writeString(buffer) ;
+            
+            setCursor(10, 60) ;
+            sprintf(buffer, "kD: %f", kD);
+            writeString(buffer) ;
 
             // Update horizontal cursor
             if (xcoord < 609) {
@@ -227,6 +242,8 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     static char classifier ;
     static float test_setpoint ;
     static float test_kP ;
+    static float test_kI ;
+    static float test_kD ;
     static float float_in ;
     while(1) {
         sprintf(pt_serial_out_buffer, "input a command: ");
@@ -234,9 +251,11 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         
-        sscanf(pt_serial_in_buffer,"%f %f", &test_setpoint, &test_kP) ;
+        sscanf(pt_serial_in_buffer,"%f %f %f %f", &test_setpoint, &test_kP, &test_kI, &test_kD) ;
         setpoint = float2fix15(constrain(test_setpoint, 10.0, 150.0)) ;
         kP = test_kP ;
+        kI = test_kI ;
+        kD = test_kD ;
         // // convert input string to number
         // sscanf(pt_serial_in_buffer,"%c", &classifier) ;
 
