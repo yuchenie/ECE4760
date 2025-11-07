@@ -68,14 +68,31 @@ int threshold = 10 ;
 #define max(a,b) ((a<b) ? b:a)
 #define abs(a) ((a>0) ? a:-a)
 
-// semaphore
+// semaphores
 static struct pt_sem vga_semaphore ;
+static struct pt_sem playback_semaphore ; 
+
+// Button parameters
+#define BUTTON_PIN 28 // MAKE SURE
+
+// Debouncer State Machine variables
+int button_state = 0;
+int prev_button_state = 0;
+int prev_prev_button_state = 0;
+
+// Predefined orientations
+fix15 fix_0_deg = int2fix15(0);
+fix15 fix_60_deg = int2fix15(60);
+fix15 fix_90_deg = int2fix15(90);
+fix15 fix_120_deg = int2fix15(120);
 
 // Some paramters for PWM
 #define WRAPVAL 6000
 #define CLKDIV  25.0
 #define MAX_PWM 4200
 uint slice_num ;
+
+// 
 
 float constrain(float value, float min, float max) {
     if (value > max) {
@@ -230,8 +247,60 @@ static PT_THREAD (protothread_vga(struct pt *pt))
                 xcoord = 81 ;
             }
         }
+        
+        /*
+        Read the button and trigger playback if pressed 
+        (not sure about timing here, given this runs at 1khz or around there)
+        */ 
+
+        // Get button state
+        button_state = gpio_get(BUTTON_PIN);
+        
+        // Debouncer State Machine
+        if (button_state == 1 && button_state == prev_button_state && prev_button_state != prev_prev_button_state) {
+            // If button pressed, signal playback thread
+            PT_SEM_SIGNAL(pt, &playback_semaphore);
+        }
+        // update state machine variables
+        prev_prev_button_state = prev_button_state;
+        prev_button_state = button_state;
+
     }
     // Indicate end of thread
+    PT_END(pt);
+}
+
+// Playback thread, triggered on semaphore from button press in VGA thread (currently on core 1, not sure abt this)
+static PT_THREAD (protothread_playback(struct pt *pt))
+{
+    PT_BEGIN(pt);
+    
+    while(true) {
+        // Wait on semaphore from VGA thread
+        PT_SEM_WAIT(pt, &playback_semaphore);
+
+        // Set arm to horizontal
+        setpoint = fix_90_deg;
+
+        // Yield for 5 sec
+        PT_YIELD_usec(5000000);
+
+        // Set to 30 deg above horizontal (120)
+        setpoint = fix_120_deg;
+
+        // Yield for 5 sec
+        PT_YIELD_usec(5000000);
+
+        // Set to 30 deg below horizontal (60)
+        setpoint = fix_60_deg;
+
+        // Yield for 5 sec
+        PT_YIELD_usec(5000000);
+
+        // Set arm to horizontal
+        setpoint = fix_90_deg;
+    }
+
     PT_END(pt);
 }
 
@@ -277,6 +346,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 // Entry point for core 1
 void core1_entry() {
     pt_add_thread(protothread_vga) ;
+    pt_add_thread(protothread_playback) ; // NOT SURE IF THIS WILL WORK
     pt_schedule_start ;
 }
 
@@ -290,6 +360,12 @@ int main() {
 
     // Initialize VGA
     initVGA() ;
+
+    // set up gpio for button input
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_down(BUTTON_PIN);
+
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// I2C CONFIGURATION ////////////////////////////
