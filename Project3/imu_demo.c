@@ -1,36 +1,9 @@
-/**
- * V. Hunter Adams (vha3@cornell.edu)
- * 
- * This demonstration utilizes the MPU6050.
- * It gathers raw accelerometer/gyro measurements, scales
- * them, and plots them to the VGA display. The top plot
- * shows gyro measurements, bottom plot shows accelerometer
- * measurements.
- * 
- * HARDWARE CONNECTIONS
- *  - GPIO 16 ---> VGA Hsync
- *  - GPIO 17 ---> VGA Vsync
- *  - GPIO 18 ---> 470 ohm resistor ---> VGA Green
- *  - GPIO 19 ---> 330 ohm resistor ---> VGA Green
- *  - GPIO 20 ---> 330 ohm resistor ---> VGA Blue
- *  - GPIO 21 ---> 330 ohm resistor ---> VGA Red
- *  - RP2040 GND ---> VGA GND
- *  - GPIO 8 ---> MPU6050 SDA
- *  - GPIO 9 ---> MPU6050 SCL
- *  - 3.3v ---> MPU6050 VCC
- *  - RP2040 GND ---> MPU6050 GND
- */
-
-
-// Include standard libraries
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
-// Include PICO libraries
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-// Include hardware libraries
 #include "hardware/pwm.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
@@ -38,21 +11,20 @@
 #include "hardware/pio.h"
 #include "hardware/i2c.h"
 #include "hardware/clocks.h"
-// Include custom libraries
 #include "vga16_graphics_v2.h"
 #include "mpu6050.h"
 #include "pt_cornell_rp2040_v1_4.h"
 
-#define ADC_PIN 26
 volatile float duty_cycle = 0;
 volatile fix15 setpoint = int2fix15(10);
 volatile fix15 accel_angle, gyro_angle, gyro_angle_delta, complementary_angle;
 
-// default good, tuned values for our setpoint
+// default tuned constants
 volatile float kP = 0.016;
 volatile float kI = 0.00005;
 volatile float kD = 0.01;
 volatile fix15 max_accumulator = int2fix15(18000);
+volatile fix15 min_accumulator = int2fix15(-18000);
 volatile fix15 fix_error_accumulator = 0;
 
 // Arrays in which raw measurements will be stored
@@ -74,7 +46,7 @@ static struct pt_sem vga_semaphore ;
 static struct pt_sem playback_semaphore ; 
 
 // Button parameters
-#define BUTTON_PIN 15 // MAKE SURE
+#define BUTTON_PIN 15 
 
 // Debouncer State Machine variables
 int button_state = 0;
@@ -90,7 +62,6 @@ fix15 fix_120_deg = int2fix15(120);
 // Some paramters for PWM
 #define WRAPVAL 6000
 #define CLKDIV  25.0
-// #define MAX_PWM 4200
 #define MAX_PWM 2000
 uint slice_num ;
 
@@ -104,9 +75,18 @@ float constrain(float value, float min, float max) {
     }
 }
 
+fix15 fix15constrain(fix15 value, fix15 min, fix15 max) {
+    if (value > max) {
+        return max;
+    } else if (value < min) {
+        return min;
+    } else {
+        return value;
+    }
+}
+
 // Interrupt service routine
 void on_pwm_wrap() {
-
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
 
@@ -121,9 +101,7 @@ void on_pwm_wrap() {
 
     fix15 fix_error_current = setpoint - complementary_angle;
     fix_error_accumulator += fix_error_current;
-    float float_error_accumulator = fix2float15(fix_error_accumulator);
-    float_error_accumulator = constrain(float_error_accumulator, -18000, 18000);
-    fix_error_accumulator = float2fix15(float_error_accumulator);
+    fix_error_accumulator = fix15constrain(fix_error_accumulator, min_accumulator, max_accumulator);
     
     float raw_duty_cycle = kP * fix2float15(fix_error_current) + kI * fix2float15(fix_error_accumulator) + kD * fix2float15(gyro[0]);
     duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
@@ -138,7 +116,6 @@ void on_pwm_wrap() {
 // Thread that draws to VGA display
 static PT_THREAD (protothread_vga(struct pt *pt))
 {
-    // Indicate start of thread
     PT_BEGIN(pt) ;
 
     // We will start drawing at column 81
@@ -187,7 +164,6 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     setCursor(45, 225) ;
     writeString(screentext) ;
     
-
     while (true) {
         // Wait on semaphore
         PT_SEM_WAIT(pt, &vga_semaphore);
@@ -201,19 +177,14 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             // Erase a column
             drawVLine(xcoord, 0, 480, BLACK) ;
 
-            // Draw bottom plot (multiply by 120 to scale from +/-2 to +/-250)
-            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
-            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
-            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            // Draw bottom plot for duty cycle (multiply by 120 to scale from +/-2 to +/-250)
             drawPixel(xcoord, 430 - (int)(NewRange*((float)((duty_cycle*120.0)-OldMin)/OldRange)), WHITE) ;
 
-            // Draw top plot
-            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
-            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
-            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
+            // Draw top plot for recorded and setpoint angles
             drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(complementary_angle))-OldMin)/OldRange)), WHITE) ;
             drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(setpoint))-OldMin)/OldRange)), GREEN) ;
 
+            // Text for values of PID constants, error integral, recorded and setpoint angles. 
             setTextColor2(WHITE, BLACK) ;
             setTextSize(1) ;
             char buffer[50];
@@ -329,20 +300,6 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         kP = test_kP ;
         kI = test_kI ;
         kD = test_kD ;
-        // // convert input string to number
-        // sscanf(pt_serial_in_buffer,"%c", &classifier) ;
-
-        // // num_independents = test_in ;
-        // if (classifier=='t') {
-        //     sprintf(pt_serial_out_buffer, "timestep: ");
-        //     serial_write ;
-        //     serial_read ;
-        //     // convert input string to number
-        //     sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        //     if (test_in > 0) {
-        //         threshold = test_in ;
-        //     }
-        // }
     }
     PT_END(pt) ;
 }
@@ -350,7 +307,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 // Entry point for core 1
 void core1_entry() {
     pt_add_thread(protothread_vga) ;
-    pt_add_thread(protothread_playback) ; // NOT SURE IF THIS WILL WORK
+    pt_add_thread(protothread_playback) ; 
     pt_schedule_start ;
 }
 
@@ -413,12 +370,6 @@ int main() {
     // Start the channel
     pwm_set_mask_enabled((1u << slice_num));
 
-    gpio_init(ADC_PIN);
-    gpio_set_dir(ADC_PIN, GPIO_IN);
-    adc_init();
-    adc_gpio_init(ADC_PIN);
-    adc_select_input(0);
-
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
@@ -429,5 +380,4 @@ int main() {
     // start core 0
     pt_add_thread(protothread_serial) ;
     pt_schedule_start ;
-
 }
