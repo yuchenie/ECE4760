@@ -49,9 +49,10 @@ volatile fix15 setpoint = int2fix15(10);
 volatile fix15 accel_angle, gyro_angle, gyro_angle_delta, complementary_angle;
 
 // default good, tuned values for our setpoint
-volatile float kP = 0.05;
+volatile float kP = 0.016;
 volatile float kI = 0.00005;
-volatile float kD = 0.0075;
+volatile float kD = 0.01;
+volatile fix15 max_accumulator = int2fix15(18000);
 volatile fix15 fix_error_accumulator = 0;
 
 // Arrays in which raw measurements will be stored
@@ -73,7 +74,7 @@ static struct pt_sem vga_semaphore ;
 static struct pt_sem playback_semaphore ; 
 
 // Button parameters
-#define BUTTON_PIN 28 // MAKE SURE
+#define BUTTON_PIN 15 // MAKE SURE
 
 // Debouncer State Machine variables
 int button_state = 0;
@@ -89,10 +90,9 @@ fix15 fix_120_deg = int2fix15(120);
 // Some paramters for PWM
 #define WRAPVAL 6000
 #define CLKDIV  25.0
-#define MAX_PWM 4200
+// #define MAX_PWM 4200
+#define MAX_PWM 2000
 uint slice_num ;
-
-// 
 
 float constrain(float value, float min, float max) {
     if (value > max) {
@@ -121,6 +121,9 @@ void on_pwm_wrap() {
 
     fix15 fix_error_current = setpoint - complementary_angle;
     fix_error_accumulator += fix_error_current;
+    float float_error_accumulator = fix2float15(fix_error_accumulator);
+    float_error_accumulator = constrain(float_error_accumulator, -18000, 18000);
+    fix_error_accumulator = float2fix15(float_error_accumulator);
     
     float raw_duty_cycle = kP * fix2float15(fix_error_current) + kI * fix2float15(fix_error_accumulator) + kD * fix2float15(gyro[0]);
     duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
@@ -224,7 +227,8 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             writeString(buffer) ;
 
             setCursor(10, 30) ;
-            sprintf(buffer, "DUTY: %f", duty_cycle);
+            // sprintf(buffer, "DUTY: %f", duty_cycle);
+            sprintf(buffer, "ACCUMULATED ERROR: %d", fix2int15(fix_error_accumulator));
             writeString(buffer) ;
             
             setCursor(10, 40) ;
@@ -321,7 +325,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         serial_read ;
         
         sscanf(pt_serial_in_buffer,"%f %f %f %f", &test_setpoint, &test_kP, &test_kI, &test_kD) ;
-        setpoint = float2fix15(constrain(test_setpoint, 10.0, 150.0)) ;
+        setpoint = float2fix15(constrain(test_setpoint, 2.0, 150.0)) ;
         kP = test_kP ;
         kI = test_kI ;
         kD = test_kD ;
