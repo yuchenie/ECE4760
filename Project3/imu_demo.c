@@ -1,3 +1,9 @@
+/*
+ECE 4760 LAB 3
+Max Trager (mt687)
+Erica Jiang (ej289)
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -15,6 +21,7 @@
 #include "mpu6050.h"
 #include "pt_cornell_rp2040_v1_4.h"
 
+// Initial duty cycle and IMU variables
 volatile float duty_cycle = 0;
 volatile fix15 setpoint = int2fix15(10);
 volatile fix15 accel_angle, gyro_angle, gyro_angle_delta, complementary_angle;
@@ -65,6 +72,7 @@ fix15 fix_120_deg = int2fix15(120);
 #define MAX_PWM 2000
 uint slice_num ;
 
+// Float constrain function
 float constrain(float value, float min, float max) {
     if (value > max) {
         return max;
@@ -75,6 +83,7 @@ float constrain(float value, float min, float max) {
     }
 }
 
+// Fix constrain function
 fix15 fix15constrain(fix15 value, fix15 min, fix15 max) {
     if (value > max) {
         return max;
@@ -85,27 +94,36 @@ fix15 fix15constrain(fix15 value, fix15 min, fix15 max) {
     }
 }
 
-// Interrupt service routine
+// Interrupt service routine for PID controller
 void on_pwm_wrap() {
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
 
     // Read the IMU
-    // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
-    // If you want these values in floating point, call fix2float15() on
-    // the raw measurements.
     mpu6050_read_raw(acceleration, gyro);
+    
+    // Calculate accelerometer angle from IMU measurements (low passed)
     accel_angle = multfix15(float2fix15(atan2(acceleration[2], acceleration[1])), oneeightyoverpi);
+    
+    // Calculate change in theta from gyro
     gyro_angle_delta = multfix15(-gyro[0], zeropt001);
+    
+    // Calculate complimentary angle
     complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
 
+    // Calculate error and accumulated error
     fix15 fix_error_current = setpoint - complementary_angle;
     fix_error_accumulator += fix_error_current;
     fix_error_accumulator = fix15constrain(fix_error_accumulator, min_accumulator, max_accumulator);
     
+    // PID controller
     float raw_duty_cycle = kP * fix2float15(fix_error_current) + kI * fix2float15(fix_error_accumulator) + kD * fix2float15(gyro[0]);
+    
+    // Normalize duty cycle
     duty_cycle = duty_cycle + ((raw_duty_cycle - duty_cycle) / 16.0) ;
     int duty = (int) (constrain(duty_cycle, 0.0, 1.0) * MAX_PWM);
+    
+    // Set PWM to motor
     pwm_set_chan_level(slice_num, PWM_CHAN_B, duty);
     pwm_set_chan_level(slice_num, PWM_CHAN_A, duty);
 
@@ -113,7 +131,7 @@ void on_pwm_wrap() {
     PT_SEM_SIGNAL(pt, &vga_semaphore);
 }
 
-// Thread that draws to VGA display
+// Thread that draws to VGA display, and determines if button is pressed
 static PT_THREAD (protothread_vga(struct pt *pt))
 {
     PT_BEGIN(pt) ;
@@ -189,6 +207,13 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             setTextSize(1) ;
             char buffer[50];
             
+            /*
+            Print text to the screen for debugging:
+            - Recorded (complimentary) angle
+            - Setpoint angle
+            - Accumulated error (integral term)
+            - kP, kI, kD
+            */
             setCursor(10, 10) ;
             sprintf(buffer, "RECORDED ANGLE: %f", fix2float15(complementary_angle));
             writeString(buffer) ;
@@ -198,7 +223,6 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             writeString(buffer) ;
 
             setCursor(10, 30) ;
-            // sprintf(buffer, "DUTY: %f", duty_cycle);
             sprintf(buffer, "ACCUMULATED ERROR: %d", fix2int15(fix_error_accumulator));
             writeString(buffer) ;
             
@@ -225,7 +249,6 @@ static PT_THREAD (protothread_vga(struct pt *pt))
         
         /*
         Read the button and trigger playback if pressed 
-        (not sure about timing here, given this runs at 1khz or around there)
         */ 
 
         // Get button state
@@ -245,7 +268,7 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     PT_END(pt);
 }
 
-// Playback thread, triggered on semaphore from button press in VGA thread (currently on core 1, not sure abt this)
+// Playback thread, triggered on semaphore from button press in VGA thread 
 static PT_THREAD (protothread_playback(struct pt *pt))
 {
     PT_BEGIN(pt);
@@ -295,8 +318,11 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         
+        // Take desired angle, PID parameters as input
         sscanf(pt_serial_in_buffer,"%f %f %f %f", &test_setpoint, &test_kP, &test_kI, &test_kD) ;
         setpoint = float2fix15(constrain(test_setpoint, 2.0, 150.0)) ;
+        
+        // Update parameters accordingly
         kP = test_kP ;
         kI = test_kI ;
         kD = test_kD ;
@@ -306,6 +332,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 
 // Entry point for core 1
 void core1_entry() {
+    // Add VGA and playback thread to core 1
     pt_add_thread(protothread_vga) ;
     pt_add_thread(protothread_playback) ; 
     pt_schedule_start ;
