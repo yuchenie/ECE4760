@@ -4,9 +4,9 @@
 .wrap_target
 
 pull block
+out pins, 6 [15]
+pull block
 out pins, 6	
-
-; set pins, 1
 
 .wrap
 
