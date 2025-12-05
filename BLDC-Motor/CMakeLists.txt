@@ -51,9 +51,7 @@ pico_generate_pio_header(BLDC-Motor ${CMAKE_CURRENT_LIST_DIR}/gate_drive.pio)
 target_link_libraries(BLDC-Motor
         pico_bootsel_via_double_reset
         hardware_pio
-        hardware_irq
-        hardware_gpio
-        hardware_clocks
+        hardware_adc
         pico_stdlib)
 
 # Add the standard include files to the build
