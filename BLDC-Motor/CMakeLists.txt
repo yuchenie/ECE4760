@@ -41,8 +41,8 @@ pico_set_program_name(BLDC-Motor "BLDC-Motor")
 pico_set_program_version(BLDC-Motor "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(BLDC-Motor 0)
-pico_enable_stdio_usb(BLDC-Motor 1)
+pico_enable_stdio_uart(BLDC-Motor 1)
+pico_enable_stdio_usb(BLDC-Motor 0)
 
 pico_generate_pio_header(BLDC-Motor ${CMAKE_CURRENT_LIST_DIR}/pwm.pio)
 pico_generate_pio_header(BLDC-Motor ${CMAKE_CURRENT_LIST_DIR}/gate_drive.pio)

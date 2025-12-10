@@ -68,6 +68,17 @@ void pio_pwm_set_level(PIO pio, uint sm, uint32_t level) {
     pio_sm_put_blocking(pio, sm, level);
 }
 
+// Float constrain function
+float constrain(float value, float min, float max) {
+    if (value > max) {
+        return max;
+    } else if (value < min) {
+        return min;
+    } else {
+        return value;
+    }
+}
+
 void update_control() {
     int pwm = gpio_get(PWM_PIN);
     uint32_t data = 0b000000 | (1 << shift[state][0]) | (pwm << shift[state][1]) | (!pwm << shift[state][2]);    
@@ -174,6 +185,27 @@ static PT_THREAD (user_input(struct pt *pt))
     PT_END(pt) ;
 }
 
+// User input thread. User can change draw speed
+static PT_THREAD (serial_input(struct pt *pt))
+{
+    PT_BEGIN(pt) ;
+    static char classifier ;
+    static float throttle_ ;
+    while(1) {
+        sprintf(pt_serial_out_buffer, "input a command: ");
+        serial_write ;
+        // spawn a thread to do the non-blocking serial read
+        serial_read ;
+        
+        // Take desired angle, PID parameters as input
+        sscanf(pt_serial_in_buffer,"%f", &throttle_) ;
+        float throttle = constrain(throttle_, 0.0, 1.0) ;
+        float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
+        pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
+    }
+    PT_END(pt) ;
+}
+
 int main() {
     stdio_init_all();
 
@@ -213,6 +245,7 @@ int main() {
     adc_gpio_init(THROTTLE_ADC);
     adc_select_input(0);
     
-    pt_add_thread(user_input);
+    // pt_add_thread(user_input);
+    pt_add_thread(serial_input);
     pt_schedule_start ;
 }
