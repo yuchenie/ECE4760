@@ -19,6 +19,7 @@ volatile int state = 0;
 
 // controls, velocity feedback, and volts per hertz values
 volatile int dir = 0;
+volatile float throttle = 0;
 volatile float motor_rpm = 0.0f;
 const float RATED_MOTOR_RPM = 3000.0f;
 const float RATED_MOTOR_VOLTAGE = 12.0f;
@@ -78,6 +79,18 @@ const float adc_to_current = (LOGIC_LEVEL) / (ADC_MAX * INA_GAIN * SHUNT_RESISTA
 
 #define abs(a) ((a>0) ? a:-a)
 
+// Constrain duty cycle & map to wrap value.
+int duty_cycle_to_level(float duty_cycle)
+{
+    if (duty_cycle < 0.0f)
+        duty_cycle = 0.0f;
+    if (duty_cycle >= 1.0f) {
+        duty_cycle = 1.0f;
+    }
+
+    return (int)(duty_cycle * WRAPVAL);
+}
+
 // Write `period` to the input shift register
 void pio_pwm_set_period(PIO pio, uint sm, uint32_t period) {
     pio_sm_set_enabled(pio, sm, false);
@@ -119,6 +132,10 @@ bool timer_callback(struct repeating_timer *t)
     // minimum measurable rpm is 25 rpm
     if (motor_rpm < MIN_RPM)
         motor_rpm = 0.0f;
+
+    // update volts per hertz control with new speed
+    float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
+    pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
     
     cancel_repeating_timer(&timer);
     add_repeating_timer_ms(100, (repeating_timer_callback_t)timer_callback, NULL, &timer);
@@ -152,6 +169,10 @@ void irq_handler(uint gpio, uint32_t events) {
     float alpha = step_period / (TAU + step_period);
     motor_rpm = alpha * raw_rpm + (1.0f - alpha) * motor_rpm;
 
+    // update volts per hertz control with new speed
+    float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
+    pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
+
     // reset the timer to call this function again in 100ms if no step is detected
     cancel_repeating_timer(&timer);
     add_repeating_timer_ms(100, (repeating_timer_callback_t)timer_callback, NULL, &timer);
@@ -161,18 +182,6 @@ void irq_handler(uint gpio, uint32_t events) {
 void pwm_irq0() {
     pio_interrupt_clear(pwm_pio, 0);
     update_control();
-}
-
-// Constrain duty cycle & map to wrap value.
-int duty_cycle_to_level(float duty_cycle)
-{
-    if (duty_cycle < 0.0f)
-        duty_cycle = 0.0f;
-    if (duty_cycle >= 1.0f) {
-        duty_cycle = 1.0f;
-    }
-
-    return (int)(duty_cycle * WRAPVAL);
 }
 
 // Current sensing thread.
@@ -227,9 +236,7 @@ static PT_THREAD (serial_input(struct pt *pt))
             dir = 0;
         }
 
-        float throttle = abs(throttle_) ;
-        float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
-        pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
+        throttle = abs(throttle_) ;
     }
     PT_END(pt) ;
 }
