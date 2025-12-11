@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "hardware/adc.h"
+#include "hardware/clocks.h"
 #include "pwm.pio.h"
 #include "gate_drive.pio.h"
 #include "pt_cornell_rp2040_v1_4.h"
@@ -15,14 +16,13 @@ uint32_t prev_data = 0b000000;
 
 #define TAU 1e6 // time constant in us for low-pass filter
 
+volatile int dir = 0;
 volatile float motor_rpm = 0.0f;
 const float RATED_MOTOR_RPM = 3000.0f;
 const float RATED_MOTOR_VOLTAGE = 12.0f;
 const float MAX_VOLTAGE_AT_STALL = 6.0f;
 #define MIN_RPM 25.0f
 #define WRAPVAL 255
-
-#define THROTTLE_ADC 26
 
 // if the motor is stationary, then the interrupt needs to be called
 // periodically to avoid the interrupt from never being called
@@ -33,13 +33,23 @@ struct repeating_timer timer;
 volatile uint32_t irq_prev_time = 0;
 
 // commutation table
-const uint8_t shift[6][3] = {
-    {3,0,1},
-    {5,2,3},
-    {5,0,1},
-    {1,4,5},
-    {3,4,5},
-    {1,2,3},
+const uint8_t shift[2][6][3] = {
+    {
+        {1,2,3},
+        {3,4,5},
+        {1,4,5},
+        {5,0,1},
+        {5,2,3},
+        {3,0,1},
+    },
+    {
+        {3,0,1},
+        {5,2,3},
+        {5,0,1},
+        {1,4,5},
+        {3,4,5},
+        {1,2,3},
+    }
 };
 
 // PWM PIO state machine
@@ -53,6 +63,15 @@ int gd_sm = 1;
 // TODO adjust wiring onto pico because it's wrong
 #define NUM_INPUTS 3
 const uint input_pins[NUM_INPUTS] = {16, 17, 18};
+const uint adc_pins[NUM_INPUTS] = {26, 27, 28};
+
+#define SHUNT_RESISTANCE 0.025
+#define INA_GAIN 20
+#define LOGIC_LEVEL 3.3
+#define ADC_MAX 4095
+const float adc_to_current = (LOGIC_LEVEL) / (ADC_MAX * INA_GAIN * SHUNT_RESISTANCE);
+
+#define abs(a) ((a>0) ? a:-a)
 
 // Write `period` to the input shift register
 void pio_pwm_set_period(PIO pio, uint sm, uint32_t period) {
@@ -81,8 +100,8 @@ float constrain(float value, float min, float max) {
 
 void update_control() {
     int pwm = gpio_get(PWM_PIN);
-    uint32_t data = 0b000000 | (1 << shift[state][0]) | (pwm << shift[state][1]) | (!pwm << shift[state][2]);    
-    uint32_t test = 0b000000 | (1 << shift[state][0]);
+    uint32_t data = 0b000000 | (1 << shift[dir][state][0]) | (pwm << shift[dir][state][1]) | (!pwm << shift[dir][state][2]);    
+    uint32_t test = 0b000000 | (1 << shift[dir][state][0]);
     pio_sm_put_blocking(gd_pio, gd_sm, test);
     pio_sm_put_blocking(gd_pio, gd_sm, data);
 }
@@ -169,18 +188,31 @@ int adc_deadzone(int adc_value)
     return adc_value;
 }
 
-// User input thread. User can change throttle.
-static PT_THREAD (user_input(struct pt *pt))
-{
+static PT_THREAD (current_sense(struct pt *pt)) {
     PT_BEGIN(pt) ;
     while(1) {
-        float throttle = (float)adc_deadzone(adc_read()) / 4095.0f;
-        float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
-        pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
+        
+        if (dir == 1) {
+            if (state == 1 || state == 2) {
+                adc_select_input(0);
+            } else if (state == 0 || state == 4) {
+                adc_select_input(1);  
+            } else if (state == 3 || state == 5) {
+                adc_select_input(2);       
+            }
+        } else {
+            if (state == 3 || state == 4) {
+                adc_select_input(0);
+            } else if (state == 1 || state == 5) {
+                adc_select_input(1);  
+            } else if (state == 0 || state == 2) {
+                adc_select_input(2);       
+            }
+        }
 
-        // printf("Velocity: %f\tThrottle: %f\tDuty: %d\n", motor_rpm, throttle, duty_cycle_to_level(duty));
+        printf("Current: %f\n", adc_read() * adc_to_current);
 
-        PT_YIELD_usec(30000) ;
+        PT_YIELD_usec(10000) ;
     }
     PT_END(pt) ;
 }
@@ -197,9 +229,15 @@ static PT_THREAD (serial_input(struct pt *pt))
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         
-        // Take desired angle, PID parameters as input
         sscanf(pt_serial_in_buffer,"%f", &throttle_) ;
-        float throttle = constrain(throttle_, 0.0, 1.0) ;
+
+        if (throttle_ < 0) {
+            dir = 1;
+        } else {
+            dir = 0;
+        }
+
+        float throttle = constrain(abs(throttle_), 0.0, 1.0) ;
         float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
         pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
     }
@@ -207,6 +245,7 @@ static PT_THREAD (serial_input(struct pt *pt))
 }
 
 int main() {
+    set_sys_clock_khz(150000, true) ;
     stdio_init_all();
 
     // PWM PIO state machine
@@ -236,16 +275,19 @@ int main() {
     }
 
     // add a timer that will call the irq_handler if no step has been detected for 100ms
-    add_repeating_timer_ms(100, (repeating_timer_callback_t)timer_callback, NULL, &timer);
+    add_repeating_timer_ms(100, (repeating_timer_callback_t)timer_callback, NULL, &timer);    
 
-    // configure adc for throttle input
-    gpio_init(THROTTLE_ADC);
-    gpio_set_dir(THROTTLE_ADC, GPIO_IN);
+    // configure adc for current sense
     adc_init();
-    adc_gpio_init(THROTTLE_ADC);
     adc_select_input(0);
-    
-    // pt_add_thread(user_input);
+    for (int i = 0; i < NUM_INPUTS; i++)
+    {
+        gpio_init(adc_pins[i]);
+        gpio_set_dir(adc_pins[i], GPIO_IN);
+        adc_gpio_init(adc_pins[i]);
+    }
+
+    // pt_add_thread(current_sense);
     pt_add_thread(serial_input);
     pt_schedule_start ;
 }

@@ -52,6 +52,7 @@ target_link_libraries(BLDC-Motor
         pico_bootsel_via_double_reset
         hardware_pio
         hardware_adc
+        hardware_clocks
         pico_stdlib)
 
 # Add the standard include files to the build
