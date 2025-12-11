@@ -11,11 +11,13 @@
 #define OUT_PINS 10
 #define PWM_PIN 25
 
+// the rotor position as defined by hall input values. 
+// note that this value does not change incrementally as the motor moves!
 volatile int state = 0;
-uint32_t prev_data = 0b000000; 
 
 #define TAU 1e6 // time constant in us for low-pass filter
 
+// controls, velocity feedback, and volts per hertz values
 volatile int dir = 0;
 volatile float motor_rpm = 0.0f;
 const float RATED_MOTOR_RPM = 3000.0f;
@@ -34,6 +36,7 @@ volatile uint32_t irq_prev_time = 0;
 
 // commutation table
 const uint8_t shift[2][6][3] = {
+    // clockwise
     {
         {1,2,3},
         {3,4,5},
@@ -42,6 +45,7 @@ const uint8_t shift[2][6][3] = {
         {5,2,3},
         {3,0,1},
     },
+    // counter-clockwise
     {
         {3,0,1},
         {5,2,3},
@@ -60,11 +64,12 @@ int pwm_sm = 0;
 PIO gd_pio = pio1;
 int gd_sm = 1;
 
-// TODO adjust wiring onto pico because it's wrong
+// hall inputs
 #define NUM_INPUTS 3
 const uint input_pins[NUM_INPUTS] = {16, 17, 18};
-const uint adc_pins[NUM_INPUTS] = {26, 27, 28};
 
+// current sensing
+const uint adc_pins[NUM_INPUTS] = {26, 27, 28};
 #define SHUNT_RESISTANCE 0.025
 #define INA_GAIN 20
 #define LOGIC_LEVEL 3.3
@@ -87,17 +92,7 @@ void pio_pwm_set_level(PIO pio, uint sm, uint32_t level) {
     pio_sm_put_blocking(pio, sm, level);
 }
 
-// Float constrain function
-float constrain(float value, float min, float max) {
-    if (value > max) {
-        return max;
-    } else if (value < min) {
-        return min;
-    } else {
-        return value;
-    }
-}
-
+// Update values to drive the phases.
 void update_control() {
     int pwm = gpio_get(PWM_PIN);
     uint32_t data = 0b000000 | (1 << shift[dir][state][0]) | (pwm << shift[dir][state][1]) | (!pwm << shift[dir][state][2]);    
@@ -131,12 +126,14 @@ bool timer_callback(struct repeating_timer *t)
 }
 
 void irq_handler(uint gpio, uint32_t events) {
+    // Update rotor position & gate outputs.
     int a = gpio_get(input_pins[0]);
     int b = gpio_get(input_pins[1]);
     int c = gpio_get(input_pins[2]);
     state = ((a << 2) | (b << 1) | (c)) - 1;
     update_control();
 
+    // Velocity feedback
     int irq_current_time = time_us_64();
 
     // time between steps in microseconds
@@ -160,11 +157,13 @@ void irq_handler(uint gpio, uint32_t events) {
     add_repeating_timer_ms(100, (repeating_timer_callback_t)timer_callback, NULL, &timer);
 }
 
+// Update controls on rising & falling edges of PWM signal. 
 void pwm_irq0() {
     pio_interrupt_clear(pwm_pio, 0);
     update_control();
 }
 
+// Constrain duty cycle & map to wrap value.
 int duty_cycle_to_level(float duty_cycle)
 {
     if (duty_cycle < 0.0f)
@@ -176,22 +175,13 @@ int duty_cycle_to_level(float duty_cycle)
     return (int)(duty_cycle * WRAPVAL);
 }
 
-int adc_deadzone(int adc_value)
-{
-    const int DEADZONE = 100; // adc units
-
-    if (adc_value < DEADZONE)
-        return 0;
-    if (adc_value > 4095 - DEADZONE)
-        return 4095;
-    adc_value = (adc_value - DEADZONE) * 4095 / (4095 - DEADZONE);
-    return adc_value;
-}
-
+// Current sensing thread.
+// Does not work with board :(
 static PT_THREAD (current_sense(struct pt *pt)) {
     PT_BEGIN(pt) ;
     while(1) {
         
+        // Determine the sensor to read depending on the state of the controls.
         if (dir == 1) {
             if (state == 1 || state == 2) {
                 adc_select_input(0);
@@ -217,7 +207,7 @@ static PT_THREAD (current_sense(struct pt *pt)) {
     PT_END(pt) ;
 }
 
-// User input thread. User can change draw speed
+// User input thread. User can change throttle.
 static PT_THREAD (serial_input(struct pt *pt))
 {
     PT_BEGIN(pt) ;
@@ -237,7 +227,7 @@ static PT_THREAD (serial_input(struct pt *pt))
             dir = 0;
         }
 
-        float throttle = constrain(abs(throttle_), 0.0, 1.0) ;
+        float throttle = abs(throttle_) ;
         float duty = throttle * (motor_rpm / RATED_MOTOR_RPM + MAX_VOLTAGE_AT_STALL / RATED_MOTOR_VOLTAGE);
         pio_pwm_set_level(pwm_pio, pwm_sm, duty_cycle_to_level(duty));
     }
@@ -245,6 +235,7 @@ static PT_THREAD (serial_input(struct pt *pt))
 }
 
 int main() {
+    // overclocking, be aware that changing the system clock affects the switching dead time!
     set_sys_clock_khz(150000, true) ;
     stdio_init_all();
 
