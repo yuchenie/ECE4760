@@ -127,7 +127,7 @@ bool timer_callback(struct repeating_timer *t)
     float timer_period = (float)(timer_current_time - irq_prev_time);
     
     // low-pass filter
-    float raw_rpm = 2.5e-6f / timer_period; 
+    float raw_rpm = 2.5e6f / timer_period; 
     float alpha = timer_period / (TAU + timer_period);
     motor_rpm = alpha * raw_rpm + (1.0f - alpha) * motor_rpm;
     
@@ -165,7 +165,7 @@ void irq_handler(uint gpio, uint32_t events) {
 
     // step/us * 1 elec. rev/6 steps * 1 mech. rev/4 elec. rev * 1e6 us/s * 60 s/min
     // = 2.5e6 rpm
-    float raw_rpm = 2.5e-6f / step_period; 
+    float raw_rpm = 2.5e6f / step_period; 
 
     // low-pass filter
     float alpha = step_period / (TAU + step_period);
