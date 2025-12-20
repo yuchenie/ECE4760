@@ -107,10 +107,12 @@ void pio_pwm_set_level(PIO pio, uint sm, uint32_t level) {
 
 // Update values to drive the phases.
 void update_control() {
-    int pwm = gpio_get(PWM_PIN);
-    uint32_t data = 0b000000 | (1 << shift[dir][state][0]) | (pwm << shift[dir][state][1]) | (!pwm << shift[dir][state][2]);    
-    uint32_t test = 0b000000 | (1 << shift[dir][state][0]);
-    pio_sm_put_blocking(gd_pio, gd_sm, test);
+    int pwm = gpio_get(PWM_PIN);   
+    
+    uint32_t deadtime = 0b000000 | (1 << shift[dir][state][0]); // Only use deadtime for switching phase; i.e. the grounded phase remains grounded.
+    uint32_t data = 0b000000 | (1 << shift[dir][state][0]) | (pwm << shift[dir][state][1]) | (!pwm << shift[dir][state][2]); 
+
+    pio_sm_put_blocking(gd_pio, gd_sm, deadtime);
     pio_sm_put_blocking(gd_pio, gd_sm, data);
 }
 
@@ -125,7 +127,7 @@ bool timer_callback(struct repeating_timer *t)
     float timer_period = (float)(timer_current_time - irq_prev_time);
     
     // low-pass filter
-    float raw_rpm = 2.5e6f / timer_period; 
+    float raw_rpm = 2.5e-6f / timer_period; 
     float alpha = timer_period / (TAU + timer_period);
     motor_rpm = alpha * raw_rpm + (1.0f - alpha) * motor_rpm;
     
@@ -163,7 +165,7 @@ void irq_handler(uint gpio, uint32_t events) {
 
     // step/us * 1 elec. rev/6 steps * 1 mech. rev/4 elec. rev * 1e6 us/s * 60 s/min
     // = 2.5e6 rpm
-    float raw_rpm = 2.5e6f / step_period; 
+    float raw_rpm = 2.5e-6f / step_period; 
 
     // low-pass filter
     float alpha = step_period / (TAU + step_period);
